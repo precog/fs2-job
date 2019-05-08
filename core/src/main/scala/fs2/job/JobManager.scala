@@ -24,13 +24,18 @@ import cats.effect.{Concurrent, Timer}
 
 import fs2.concurrent.{Queue, SignallingRef}
 
-import scala.{Array, Boolean, Int, List, Option, None, Nothing, Predef, Some, Unit}, Predef.???
+import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 import scala.collection.JavaConverters._
-import scala.concurrent.duration._
 
 import java.lang.{RuntimeException, SuppressWarnings}
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * A coordination mechanism for parallel job management. This
+ * structure provides mechanisms for aggregated notifications
+ * from jobs, deterministic cancelation, "fire and forget"
+ * submission, and sidecar-style cancelation of direct streams.
+ */
 final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     notificationsQ: Queue[F, Option[N]],
     dispatchQ: Queue[F, Stream[F, Nothing]]) {
@@ -42,11 +47,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   val notifications: Stream[F, N] = notificationsQ.dequeue.unNoneTerminate
 
   @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments", "org.wartremover.warts.Equals"))
-  def submit[R](
-      job: Job[F, I, N, R],
-      delay: Option[FiniteDuration] = None)
-      : F[Boolean] = {
-
+  def submit[R](job: Job[F, I, N, R]): F[Boolean] = {
     val run = job.run
       .map(_.swap.toOption)
       .unNone
@@ -66,13 +67,6 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
         Concurrent[F].pure(false)
     }
   }
-
-  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
-  def schedule[R](
-      job: Job[F, I, N, R],
-      period: FiniteDuration,
-      delay: Option[FiniteDuration] = None)
-      : F[Unit] = ???
 
   def tap[R](job: Job[F, I, N, R]): Stream[F, R] =
     managementMachinery(job.id, job.run.map(_.toOption).unNone)
