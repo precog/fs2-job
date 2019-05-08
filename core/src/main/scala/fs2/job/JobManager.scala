@@ -17,43 +17,149 @@
 package fs2
 package job
 
-import cats.effect.Concurrent
+import cats.syntax.flatMap._
+import cats.syntax.functor._
 
-import scala.{Array, Option, None, Predef, Unit}, Predef.???
+import cats.effect.{Concurrent, Timer}
+
+import fs2.concurrent.{Queue, SignallingRef}
+
+import scala.{Array, Boolean, Int, List, Option, None, Nothing, Predef, Some, Unit}, Predef.???
+import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 
-import java.lang.SuppressWarnings
+import java.lang.{RuntimeException, SuppressWarnings}
+import java.util.concurrent.ConcurrentHashMap
 
-final class JobManager[F[_], I, N, R] private () {
+final class JobManager[F[_]: Concurrent: Timer, I, N] private (
+    notificationsQ: Queue[F, Option[N]],
+    dispatchQ: Queue[F, Stream[F, Nothing]]) {
 
-  def notifications: Stream[F, N] = ???
+  import JobManager._
+
+  private[this] val meta: ConcurrentHashMap[I, Context[F]] = new ConcurrentHashMap[I, Context[F]]
+
+  val notifications: Stream[F, N] = notificationsQ.dequeue.unNoneTerminate
+
+  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments", "org.wartremover.warts.Equals"))
+  def submit[R](
+      job: Job[F, I, N, R],
+      delay: Option[FiniteDuration] = None)
+      : F[Boolean] = {
+
+    val run = job.run
+      .map(_.swap.toOption)
+      .unNone
+      .map(Some(_))
+      .evalMap(notificationsQ.enqueue1)
+      .drain
+
+    val putStatusF = Concurrent[F] delay {
+      val attempt = Context[F](Status.Pending, None)
+      attempt eq meta.putIfAbsent(job.id, attempt)
+    }
+
+    putStatusF flatMap { s =>
+      if (s)
+        dispatchQ.enqueue1(managementMachinery(job.id, run)).as(true)
+      else
+        Concurrent[F].pure(false)
+    }
+  }
 
   @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
-  def submit(job: Job[F, I, N, R], delay: Option[FiniteDuration] = None): F[Unit] = ???
-
-  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
-  def schedule(
+  def schedule[R](
       job: Job[F, I, N, R],
       period: FiniteDuration,
       delay: Option[FiniteDuration] = None)
       : F[Unit] = ???
 
-  def tap(job: Job[F, I, _, R]): Stream[F, R] = ???
+  def tap[R](job: Job[F, I, N, R]): Stream[F, R] =
+    managementMachinery(job.id, job.run.map(_.toOption).unNone)
 
-  def cancel(id: I): F[Unit] = ???
+  def jobIds: F[List[I]] =
+    Concurrent[F].delay(meta.keys.asScala.toList)
 
-  def status(id: I): F[Status] = ???
+  def cancel(id: I): F[Unit] = {
+    Concurrent[F].delay(meta.get(id)) flatMap {
+      case Context(Status.Running, Some(cancelF)) => cancelF
+      case _ => Concurrent[F].unit
+    }
+  }
 
-  private def run: Stream[F, Unit] = ???
-  private def shutdown: F[Unit] = ???
+  def status(id: I): F[Option[Status]] =
+    Concurrent[F].delay(Option(meta.get(id)).map(_.status))
+
+  private def shutdown: F[Unit] =
+    Concurrent[F].delay(meta.clear()) >> notificationsQ.enqueue1(None)
+
+  private[this] def managementMachinery[A](id: I, in: Stream[F, A]): Stream[F, A] = {
+    Stream force {
+      SignallingRef[F, Boolean](false) map { s =>
+        lazy val frontF: F[Unit] = {
+          Concurrent[F].delay(Option(meta.get(id))) flatMap {
+            case Some(old @ Context(Status.Pending, _)) =>
+              val casF = Concurrent[F] delay {
+                meta.replace(id, old, Context(Status.Running, Some(s.set(true))))
+              }
+
+              casF flatMap { result =>
+                if (result)
+                  Concurrent[F].unit
+                else
+                  frontF
+              }
+
+            case Some(Context(Status.Canceled, _)) =>
+              Concurrent[F].delay(meta.remove(id)).void
+
+            case Some(Context(Status.Running, _)) =>
+              Concurrent[F].raiseError(new RuntimeException("job already running!"))    // TODO
+
+            case None =>
+              val casF = Concurrent[F] delay {
+                val attempt = Context(Status.Running, Some(s.set(true)))
+                attempt eq meta.putIfAbsent(id, attempt)
+              }
+
+              casF flatMap { result =>
+                if (result)
+                  Concurrent[F].unit
+                else
+                  frontF
+              }
+          }
+        }
+
+        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >>
+          in.interruptWhen(s)
+      }
+    }
+  }
 }
 
 object JobManager {
 
-  def apply[F[_]: Concurrent, I, N, R]: Stream[F, JobManager[F, I, N, R]] = {
-    val initF = Concurrent[F].delay(new JobManager[F, I, N, R])
-    Stream.bracket(initF)(_.shutdown) flatMap { jm =>
-      Stream.emit(jm).concurrently(jm.run)
-    }
+  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
+  def apply[F[_]: Concurrent: Timer, I, N](
+      jobLimit: Int = 100,
+      notificationsLimit: Int = 10)   // all numbers are arbitrary, really
+      : Stream[F, JobManager[F, I, N]] = {
+
+    for {
+      notificationsQ <- Stream.eval(Queue.bounded[F, Option[N]](notificationsLimit))
+      dispatchQ <- Stream.eval(Queue.bounded[F, Stream[F, Nothing]](jobLimit))
+
+      initF = Concurrent[F] delay {
+        new JobManager[F, I, N](
+          notificationsQ,
+          dispatchQ)
+      }
+
+      jm <- Stream.bracket(initF)(_.shutdown)
+      back <- Stream.emit(jm).concurrently(dispatchQ.dequeue.parJoin(jobLimit))
+    } yield back
   }
+
+  private final case class Context[F[_]](status: Status, cancel: Option[F[Unit]])
 }
