@@ -26,6 +26,7 @@ import fs2.concurrent.{Queue, SignallingRef}
 
 import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 import scala.collection.JavaConverters._
+import scala.util.{Left, Right}
 
 import java.lang.{RuntimeException, SuppressWarnings}
 import java.util.concurrent.ConcurrentHashMap
@@ -46,6 +47,15 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
   val notifications: Stream[F, N] = notificationsQ.dequeue.unNoneTerminate
 
+  /**
+   * Submits a job for parallel execution at the earliest possible moment.
+   * If the job submission queue is full, this function will asynchronously
+   * block until space is available. Note that a job is visible as Pending
+   * immediately upon submission, even when space is unavailable.
+   *
+   * Attempting to submit a job with the same id as a pre-existing job will
+   * produce false.
+   */
   @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments", "org.wartremover.warts.Equals"))
   def submit[R](job: Job[F, I, N, R]): F[Boolean] = {
     val run = job.run
@@ -62,32 +72,73 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
     putStatusF flatMap { s =>
       if (s)
-        dispatchQ.enqueue1(managementMachinery(job.id, run)).as(true)
+        dispatchQ.enqueue1(managementMachinery(job.id, run, false)).as(true)
       else
         Concurrent[F].pure(false)
     }
   }
 
-  def tap[R](job: Job[F, I, N, R]): Stream[F, R] =
-    managementMachinery(job.id, job.run.map(_.toOption).unNone)
+  /**
+   * Like submit, but produces a managed stream equal to the job's
+   * run stream. Notifications are stripped and routed to the
+   * shared notifications source. The resulting stream is subject
+   * to remote cancelation, the same as any submitted job.
+   *
+   * Attempting to tap a job with a pre-existing id will produce
+   * an error.
+   */
+  def tap[R](job: Job[F, I, N, R]): Stream[F, R] = {
+    // TODO failure isn't quite deterministic here when job already exists
+    val run = job.run evalMap {
+      case Left(n) => notificationsQ.enqueue1(Some(n)).as(None: Option[R])
+      case Right(r) => Concurrent[F].pure(Some(r): Option[R])
+    }
 
+    managementMachinery(job.id, run.unNone, true)
+  }
+
+  /**
+   * Returns the currently-running jobs by ID.
+   */
   def jobIds: F[List[I]] =
     Concurrent[F].delay(meta.keys.asScala.toList)
 
+  /**
+   * Cancels the job by id. If the job does not exist, this call
+   * will be ignored.
+   */
+  @SuppressWarnings(Array("org.wartremover.warts.Recursion"))
   def cancel(id: I): F[Unit] = {
     Concurrent[F].delay(meta.get(id)) flatMap {
-      case Context(Status.Running, Some(cancelF)) => cancelF
+      case Context(Status.Running, Some(cancelF)) =>
+        cancelF
+
+      case old @ Context(Status.Pending, _) =>
+        val killer = Context[F](Status.Canceled, None)
+        Concurrent[F].delay(meta.replace(id, old, killer)) flatMap { success =>
+          if (success)
+            Concurrent[F].unit
+          else
+            cancel(id)
+        }
+
       case _ => Concurrent[F].unit
     }
   }
 
+  /**
+   * Returns the status of a given job id, if known.
+   */
   def status(id: I): F[Option[Status]] =
     Concurrent[F].delay(Option(meta.get(id)).map(_.status))
 
   private def shutdown: F[Unit] =
     Concurrent[F].delay(meta.clear()) >> notificationsQ.enqueue1(None)
 
-  private[this] def managementMachinery[A](id: I, in: Stream[F, A]): Stream[F, A] = {
+  private[this] def managementMachinery[A](
+      id: I,
+      in: Stream[F, A],
+      ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
         lazy val frontF: F[Unit] = {
@@ -111,16 +162,20 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
               Concurrent[F].raiseError(new RuntimeException("job already running!"))    // TODO
 
             case None =>
-              val casF = Concurrent[F] delay {
-                val attempt = Context(Status.Running, Some(s.set(true)))
-                attempt eq meta.putIfAbsent(id, attempt)
-              }
+              if (ignoreAbsence) {
+                val casF = Concurrent[F] delay {
+                  val attempt = Context(Status.Running, Some(s.set(true)))
+                  attempt eq meta.putIfAbsent(id, attempt)
+                }
 
-              casF flatMap { result =>
-                if (result)
-                  Concurrent[F].unit
-                else
-                  frontF
+                casF flatMap { result =>
+                  if (result)
+                    Concurrent[F].unit
+                  else
+                    frontF
+                }
+              } else {
+                Concurrent[F].unit
               }
           }
         }
