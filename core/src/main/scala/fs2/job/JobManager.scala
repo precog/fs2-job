@@ -19,15 +19,26 @@ package job
 
 import cats.effect.Concurrent
 
-import scala.{Predef, Unit}, Predef.???
+import scala.{Array, Option, None, Predef, Unit}, Predef.???
+import scala.concurrent.duration._
+
+import java.lang.SuppressWarnings
 
 final class JobManager[F[_], I, N, R] private () {
 
   def notifications: Stream[F, N] = ???
 
-  def submit(job: Job[F, I, N, R]): F[Unit] = ???
+  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
+  def submit(job: Job[F, I, N, R], delay: Option[FiniteDuration] = None): F[Unit] = ???
 
-  def tap(job: Job[F, I, N, R]): Stream[F, R] = ???
+  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
+  def schedule(
+      job: Job[F, I, N, R],
+      period: FiniteDuration,
+      delay: Option[FiniteDuration] = None)
+      : F[Unit] = ???
+
+  def tap(job: Job[F, I, _, R]): Stream[F, R] = ???
 
   def cancel(id: I): F[Unit] = ???
 

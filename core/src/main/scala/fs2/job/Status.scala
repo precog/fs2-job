@@ -17,10 +17,12 @@
 package fs2.job
 
 import scala.{Product, Serializable}
+import scala.concurrent.duration.FiniteDuration
 
 sealed trait Status extends Product with Serializable
 
 object Status {
   case object Pending extends Status
+  final case class Scheduled(fromNow: FiniteDuration) extends Status
   case object Running extends Status
 }
