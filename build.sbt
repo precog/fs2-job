@@ -20,6 +20,8 @@ lazy val core = project
   .in(file("core"))
   .settings(name := "fs2-job")
   .settings(
+    libraryDependencies += "co.fs2" %% "fs2-core" % "1.0.4",
+
     performMavenCentralSync := false,
     publishAsOSSProject := true)
   .enablePlugins(AutomateHeaderPlugin)
