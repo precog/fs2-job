@@ -20,8 +20,11 @@ lazy val core = project
   .in(file("core"))
   .settings(name := "fs2-job")
   .settings(
-    libraryDependencies += "co.fs2" %% "fs2-core" % "1.0.4",
+    libraryDependencies ++= Seq(
+        "co.fs2" %% "fs2-core" % "1.0.4",
+        "org.specs2" %% "specs2-core" % "4.3.4" % "test"),
 
+    addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.2.4"),
     performMavenCentralSync := false,
     publishAsOSSProject := true)
   .enablePlugins(AutomateHeaderPlugin)
