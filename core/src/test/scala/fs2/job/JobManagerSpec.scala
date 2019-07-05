@@ -72,7 +72,7 @@ object JobManagerSpec extends Specification {
         submitStatus <- Stream.eval(mgr.submit(job))
         _ <- await(1)
         refAfterStart <- Stream.eval(ref.get)
-        _ <- await(5)
+        _ <- await(3)
         refAfterRun <- Stream.eval(ref.get)
       } yield (refAfterStart, refAfterRun)).compile.lastOrError.unsafeRunSync
 
@@ -83,32 +83,30 @@ object JobManagerSpec extends Specification {
     "cancel a job" in {
       val JobId = 42
 
-      def jobStream(ref: Ref[IO, Boolean]): Stream[IO, Either[String, Int]] =
-        await(10).as(Right(1)) ++ Stream.eval(ref.set(true)).as(Right(2))
+      def jobStream(ref: Ref[IO, String]): Stream[IO, Either[String, Int]] =
+        await(1).as(Right(1)) ++ Stream.eval(ref.set("Started")).as(Right(2)) ++ await(1).as(Right(3)) ++ Stream.eval(ref.set("Finished")).as(Right(4))
 
-      val (submitStatus, statusAfterSubmit, statusBeforeCancel, statusAfterCancel, refAfterCancel) = (for {
+      val (statusBeforeCancel, refBeforeCancel, refAfterCancel) = (for {
         mgr <- JobManager[IO, Int, String]()
-        ref <- Stream.eval(Ref[IO].of(false))
+        ref <- Stream.eval(Ref[IO].of("Not started"))
 
         job = Job[IO, Int, String, Int](JobId, jobStream(ref))
-        submitStatus <- Stream.eval(mgr.submit(job))
-        statusAfterSubmit <- Stream.eval(mgr.status(JobId))
+        _ <- Stream.eval(mgr.submit(job))
+        _ <- await(2)
 
-        _ <- await(1)
         statusBeforeCancel <- Stream.eval(mgr.status(JobId))
+        refBeforeCancel <- Stream.eval(ref.get)
 
         _ <- Stream.eval(mgr.cancel(JobId))
-        _ <- await(1)
 
-        statusAfterCancel <- Stream.eval(mgr.status(JobId))
+        _ <- await(2)
         refAfterCancel <- Stream.eval(ref.get)
-      } yield (submitStatus, statusAfterSubmit, statusBeforeCancel, statusAfterCancel, refAfterCancel)).compile.lastOrError.unsafeRunSync
+      } yield (statusBeforeCancel, refBeforeCancel, refAfterCancel)).compile.lastOrError.unsafeRunSync
 
-      refAfterCancel mustEqual false
-      submitStatus must beTrue
-      statusAfterSubmit must beSome(Status.Pending)
+
       statusBeforeCancel must beSome(Status.Running)
-      statusAfterCancel must beNone
+      refBeforeCancel mustEqual "Started"
+      refAfterCancel mustEqual "Started"
     }
   }
 }
