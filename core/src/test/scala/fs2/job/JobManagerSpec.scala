@@ -40,7 +40,7 @@ object JobManagerSpec extends Specification {
     "submit a job" in {
       val JobId = 1
 
-      val stream = await(5).as(Right(1)) ++ Stream(2, 3, 4).map(Right(_)).covary[IO]
+      val stream = await(1).as(Right(1)) ++ Stream(2, 3, 4).map(Right(_)).covary[IO]
       val notification = Stream("done").map(Left(_)).covary[IO]
 
       val job = Job[IO, Int, String, Int](JobId, stream ++ notification)
@@ -97,7 +97,7 @@ object JobManagerSpec extends Specification {
         _ <- await(1)
         statusBeforeCancel <- Stream.eval(mgr.status(JobId))
 
-        _ <- Stream.eval(mgr.cancel(JobId)).concurrently(job.run)
+        _ <- Stream.eval(mgr.cancel(JobId))
         _ <- await(1)
 
         statusAfterCancel <- Stream.eval(mgr.status(JobId))
