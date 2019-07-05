@@ -17,7 +17,7 @@
 package fs2
 package job
 
-import scala.{Boolean, Int, List, Long, Unit}
+import scala.{Int, List, Long, Unit}
 import scala.Predef.String
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.FiniteDuration
@@ -107,6 +107,46 @@ object JobManagerSpec extends Specification {
       statusBeforeCancel must beSome(Status.Running)
       refBeforeCancel mustEqual "Started"
       refAfterCancel mustEqual "Started"
+    }
+
+    "emits notifications" in {
+      val JobId = 42
+
+      val jobStream: Stream[IO, Either[String, Int]] =
+        Stream(Right(1), Right(2), Left("50%"), Right(3), Right(4), Left("100%")).covary[IO]
+
+      val ns = (for {
+        mgr <- JobManager[IO, Int, String]()
+        submitStatus <- Stream.eval(mgr.submit(Job(JobId, jobStream)))
+        _ <- await(1)
+
+        // folds keeps pulling and blocks, even after the stream is done emitting
+        ns <- mgr.notifications.take(2).fold(List[String]()) {
+          case (acc, elem) => acc :+ elem
+        }
+      } yield ns).compile.lastOrError.unsafeRunSync
+
+      ns mustEqual List("50%", "100%")
+    }
+
+    "tapped jobs can be canceled" in {
+      val JobId = 42
+
+      def jobStream(ref: Ref[IO, String]): Stream[IO, Either[String, Int]] =
+        await(1).as(Right(1)) ++ Stream.eval(ref.set("Started")).as(Right(2)) ++ await(1).as(Right(3)) ++ Stream.eval(ref.set("Finished")).as(Right(4))
+
+      val results = (for {
+        mgr <- JobManager[IO, Int, String]()
+        ref <- Stream.eval(Ref[IO].of("Not started"))
+        tappedStream = mgr.tap(Job(JobId, jobStream(ref))).fold(List[Int]()) {
+          case (acc, elem) => acc :+ elem
+        }
+        // sequence tapped stream manually
+        _ <- tappedStream.concurrently(await(2) ++ Stream.eval(mgr.cancel(JobId)))
+        results <- Stream.eval(ref.get)
+      } yield results).compile.lastOrError.unsafeRunSync
+
+      results mustEqual "Started"
     }
   }
 }
