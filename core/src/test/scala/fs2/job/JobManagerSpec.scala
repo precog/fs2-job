@@ -62,7 +62,7 @@ object JobManagerSpec extends Specification {
       status must beSome(Status.Running)
     }
 
-    "executes a job to completion" in {
+    "execute a job to completion" in {
       val JobId = 42
 
       def jobStream(ref: SignallingRef[IO, String]): Stream[IO, Either[String, Int]] =
@@ -115,7 +115,7 @@ object JobManagerSpec extends Specification {
       refAfterCancel mustEqual "Working"
     }
 
-    "emits notifications" in {
+    "emit notifications" in {
       val JobId = 42
 
       val jobStream: Stream[IO, Either[String, Int]] =
