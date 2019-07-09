@@ -55,7 +55,7 @@ object JobManagerSpec extends Specification {
         _ <- await
         ids <- Stream.eval(mgr.jobIds)
         status <- Stream.eval(mgr.status(JobId))
-      } yield (submitResult, ids, status)).compile.lastOrError.timeout(5.seconds).unsafeRunSync
+      } yield (submitResult, ids, status)).compile.lastOrError.timeout(1.second).unsafeRunSync
 
       submitResult must beTrue
       ids must_== List(JobId)
@@ -79,7 +79,7 @@ object JobManagerSpec extends Specification {
 
         _ <- latchGet(ref, "Finished")
         refAfterRun <- Stream.eval(ref.get)
-      } yield (refAfterStart, refAfterRun)).compile.lastOrError.timeout(5.seconds).unsafeRunSync
+      } yield (refAfterStart, refAfterRun)).compile.lastOrError.timeout(1.second).unsafeRunSync
 
       refAfterStart mustEqual "Started"
       refAfterRun mustEqual "Finished"
@@ -107,7 +107,7 @@ object JobManagerSpec extends Specification {
         _ <- await
 
         refAfterCancel <- Stream.eval(ref.get)
-      } yield (statusBeforeCancel, refBeforeCancel, refAfterCancel)).compile.lastOrError.timeout(5.seconds).unsafeRunSync
+      } yield (statusBeforeCancel, refBeforeCancel, refAfterCancel)).compile.lastOrError.timeout(1.second).unsafeRunSync
 
 
       statusBeforeCancel must beSome(Status.Running)
@@ -150,7 +150,7 @@ object JobManagerSpec extends Specification {
         // sequence tapped stream manually
         _ <- tappedStream.concurrently(latchGet(ref, "Started") ++ Stream.eval(mgr.cancel(JobId)))
         results <- Stream.eval(ref.get)
-      } yield results).compile.lastOrError.timeout(5.seconds).unsafeRunSync
+      } yield results).compile.lastOrError.timeout(1.second).unsafeRunSync
 
       results mustEqual "Started"
     }
