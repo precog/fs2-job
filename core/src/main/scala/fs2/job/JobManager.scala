@@ -67,7 +67,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
     val putStatusF = Concurrent[F] delay {
       val attempt = Context[F](Status.Pending, None)
-      attempt eq meta.putIfAbsent(job.id, attempt)
+
+      Option(meta.putIfAbsent(job.id, attempt)).isEmpty
     }
 
     putStatusF flatMap { s =>
@@ -165,7 +166,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
               if (ignoreAbsence) {
                 val casF = Concurrent[F] delay {
                   val attempt = Context(Status.Running, Some(s.set(true)))
-                  attempt eq meta.putIfAbsent(id, attempt)
+
+                  Option(meta.putIfAbsent(id, attempt)).isEmpty
                 }
 
                 casF flatMap { result =>
