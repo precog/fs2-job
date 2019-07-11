@@ -20,7 +20,7 @@ package job
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import cats.effect.{Concurrent, Timer}
+import cats.effect.{Concurrent, ExitCase, Timer}
 
 import fs2.concurrent.{Queue, SignallingRef}
 
@@ -29,6 +29,7 @@ import scala.collection.JavaConverters._
 import scala.util.{Left, Right}
 
 import java.lang.{RuntimeException, SuppressWarnings}
+import java.time.OffsetDateTime
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -39,6 +40,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     notificationsQ: Queue[F, Option[N]],
+    eventQ: Queue[F, Option[Event[I]]],
     dispatchQ: Queue[F, Stream[F, Nothing]]) {
 
   import JobManager._
@@ -46,6 +48,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   private[this] val meta: ConcurrentHashMap[I, Context[F]] = new ConcurrentHashMap[I, Context[F]]
 
   val notifications: Stream[F, N] = notificationsQ.dequeue.unNoneTerminate
+  val events: Stream[F, Event[I]] = eventQ.dequeue.unNoneTerminate
 
   /**
    * Submits a job for parallel execution at the earliest possible moment.
@@ -134,7 +137,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     Concurrent[F].delay(Option(meta.get(id)).map(_.status))
 
   private def shutdown: F[Unit] =
-    Concurrent[F].delay(meta.clear()) >> notificationsQ.enqueue1(None)
+    Concurrent[F].delay(meta.clear()) >> notificationsQ.enqueue1(None) >> eventQ.enqueue1(None)
 
   private[this] def managementMachinery[A](
       id: I,
@@ -182,8 +185,18 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
           }
         }
 
-        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >>
-          in.interruptWhen(s)
+        val completeF =
+          Concurrent[F].delay(OffsetDateTime.now()).flatMap(ts => eventQ.enqueue1(Some(Event.Completed(id, ts))))
+
+        val reported = in ++ Stream.eval_(completeF)
+
+        val handled = reported.handleErrorWith(ex =>
+          for {
+            ts <- Stream.eval(Concurrent[F].delay(OffsetDateTime.now()))
+            res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, ex))))
+          } yield res)
+
+        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >> handled.interruptWhen(s)
       }
     }
   }
@@ -194,16 +207,19 @@ object JobManager {
   @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
   def apply[F[_]: Concurrent: Timer, I, N](
       jobLimit: Int = 100,
-      notificationsLimit: Int = 10)   // all numbers are arbitrary, really
+      notificationsLimit: Int = 10,
+      eventsLimit: Int = 10)   // all numbers are arbitrary, really
       : Stream[F, JobManager[F, I, N]] = {
 
     for {
       notificationsQ <- Stream.eval(Queue.bounded[F, Option[N]](notificationsLimit))
+      eventQ <- Stream.eval(Queue.bounded[F, Option[Event[I]]](eventsLimit))
       dispatchQ <- Stream.eval(Queue.bounded[F, Stream[F, Nothing]](jobLimit))
 
       initF = Concurrent[F] delay {
         new JobManager[F, I, N](
           notificationsQ,
+          eventQ,
           dispatchQ)
       }
 

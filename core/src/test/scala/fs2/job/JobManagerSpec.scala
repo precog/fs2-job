@@ -24,6 +24,8 @@ import scala.concurrent.duration._
 import scala.util.{Either, Left, Right}
 import scala.{Int, List, Unit}
 
+import java.lang.Exception
+
 import cats.Eq
 import cats.effect.IO
 import cats.instances.string._
@@ -153,6 +155,119 @@ object JobManagerSpec extends Specification {
       } yield results).compile.lastOrError.timeout(1.second).unsafeRunSync
 
       results mustEqual "Started"
+    }
+
+    "not crash when a submitted job crashes" in {
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
+
+      val failingJobStream =
+        Stream.emit(Right(1)).covary[IO] ++ Stream.raiseError[IO](new Exception("boom")).as(Right(2)) ++ Stream.emit(Right(3)).covary[IO]
+
+      val results = (for {
+        mgr <- mkJobManager
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(2, failingJobStream)))
+        _ <- latchGet(ref, "Finished")
+        results <- Stream.eval(ref.get)
+      } yield results).compile.lastOrError.timeout(1.second).unsafeRunSync
+
+      results mustEqual "Finished"
+    }
+
+    "not crash when a tapped job crashes" in {
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
+
+      val failingJobStream =
+        Stream.emit(Right(1)).covary[IO] ++ Stream.raiseError[IO](new Exception("boom")).as(Right(2)) ++ Stream.emit(Right(3)).covary[IO]
+
+      val results = (for {
+        mgr <- mkJobManager
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref))))
+        // boom
+        _ <- mgr.tap(Job(2, failingJobStream))
+        _ <- latchGet(ref, "Finished")
+        results <- Stream.eval(ref.get)
+      } yield results).compile.lastOrError.timeout(1.second).unsafeRunSync
+
+      results mustEqual "Finished"
+    }
+
+    "report errors when a job crashes" in {
+      val JobId = 1
+
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.raiseError[IO](new Exception("boom")) ++ Stream.eval(ref.set("Finished")).as(Right(3))
+
+      val event = (for {
+        mgr <- mkJobManager
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- latchGet(ref, "Started")
+        event <- mgr.events.take(1)
+      } yield event).compile.lastOrError.timeout(1.second).unsafeRunSync
+
+      event must beLike {
+        case Event.Failed(i, _, throwable) => {
+          i mustEqual JobId
+          throwable.getMessage mustEqual "boom"
+        }
+      }
+    }
+
+    "report when a job completes" in {
+      val JobId = 1
+
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.eval(ref.set("Finished")).as(Right(2))
+
+      val event = (for {
+        mgr <- mkJobManager
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- latchGet(ref, "Finished")
+        event <- mgr.events.take(1)
+      } yield event).compile.lastOrError.timeout(1.second).unsafeRunSync
+
+      event must beLike {
+        case Event.Completed(i, _) => i mustEqual JobId
+      }
+    }
+
+    "report both failing and completing jobs" in {
+      val JobId = 1
+      val FailingJobId = 2
+
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
+
+      val failingJobStream =
+        Stream.emit(Right(1)).covary[IO] ++ Stream.raiseError[IO](new Exception("boom")).as(Right(2)) ++ Stream.emit(Right(3)).covary[IO]
+
+      val events = (for {
+        mgr <- mkJobManager
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(FailingJobId, failingJobStream)))
+        _ <- latchGet(ref, "Finished")
+        events <- mgr.events.take(2).fold(List[Event[Int]]()) {
+          case (acc, elem) => acc :+ elem
+        }
+      } yield events).compile.lastOrError.timeout(1.second).unsafeRunSync
+
+      events must have size(2)
+      events must contain((event: Event[Int]) => event must beLike {
+        case Event.Completed(i, _) => i mustEqual JobId
+      }).exactly(1.times)
+
+      events must contain((event: Event[Int]) => event must beLike {
+        case Event.Failed(i, _, ex) =>
+          i mustEqual FailingJobId
+          ex.getMessage mustEqual "boom"
+      }).exactly(1.times)
     }
   }
 
