@@ -24,8 +24,8 @@ import scala.concurrent.duration._
 import scala.util.{Either, Left, Right}
 import scala.{Int, List, Unit}
 
-import java.time.Instant
 import java.lang.Exception
+import java.time.Instant
 
 import cats.Eq
 import cats.effect.IO

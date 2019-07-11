@@ -17,11 +17,10 @@
 package fs2.job
 
 import scala.{Product, Serializable}
+import scala.concurrent.duration.Duration
 
 import java.lang.Throwable
 import java.time.Instant
-
-import scala.concurrent.duration.Duration
 
 sealed trait Event[I] extends Product with Serializable
 
