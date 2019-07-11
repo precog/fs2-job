@@ -16,7 +16,7 @@
 
 package fs2.job
 
-import scala.{Product, Serializable, Option}
+import scala.{Product, Serializable}
 
 import java.lang.Throwable
 import java.time.Instant
