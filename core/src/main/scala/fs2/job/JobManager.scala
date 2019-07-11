@@ -24,12 +24,13 @@ import cats.effect.{Concurrent, Timer}
 
 import fs2.concurrent.{Queue, SignallingRef}
 
-import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 import scala.collection.JavaConverters._
+import scala.concurrent.duration._
 import scala.util.{Left, Right}
+import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 
 import java.lang.{RuntimeException, SuppressWarnings}
-import java.time.OffsetDateTime
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -76,7 +77,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
     putStatusF flatMap { s =>
       if (s)
-        dispatchQ.enqueue1(managementMachinery(job.id, run, false)).as(true)
+        Concurrent[F].delay(Instant.now()).flatMap(ts =>
+          dispatchQ.enqueue1(managementMachinery(job.id, run, ts, false)).as(true))
       else
         Concurrent[F].pure(false)
     }
@@ -98,7 +100,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
       case Right(r) => Concurrent[F].pure(Some(r): Option[R])
     }
 
-    managementMachinery(job.id, run.unNone, true)
+    Stream.eval(Concurrent[F].delay(Instant.now())).flatMap(ts =>
+      managementMachinery(job.id, run.unNone, ts, true))
   }
 
   /**
@@ -142,6 +145,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   private[this] def managementMachinery[A](
       id: I,
       in: Stream[F, A],
+    startingTime: Instant
+      ,
       ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
@@ -186,14 +191,19 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
         }
 
         val completeF =
-          Concurrent[F].delay(OffsetDateTime.now()).flatMap(ts => eventQ.enqueue1(Some(Event.Completed(id, ts))))
+          for {
+            ts <- Concurrent[F].delay(Instant.now())
+            duration = (ts.toEpochMilli - startingTime.toEpochMilli).milliseconds
+            res <- eventQ.enqueue1(Some(Event.Completed(id, ts, duration)))
+          } yield res
 
         val reported = in ++ Stream.eval_(completeF)
 
         val handled = reported.handleErrorWith(ex =>
           for {
-            ts <- Stream.eval(Concurrent[F].delay(OffsetDateTime.now()))
-            res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, ex))))
+            ts <- Stream.eval(Concurrent[F].delay(Instant.now()))
+            duration = (ts.toEpochMilli - startingTime.toEpochMilli).milliseconds
+            res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, ex, duration))))
           } yield res)
 
         Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >> handled.interruptWhen(s)

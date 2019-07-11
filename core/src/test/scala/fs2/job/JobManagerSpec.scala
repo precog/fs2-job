@@ -17,13 +17,14 @@
 package fs2
 package job
 
-import scala.Predef.String
+import scala.Predef._
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 import scala.util.{Either, Left, Right}
 import scala.{Int, List, Unit}
 
+import java.time.Instant
 import java.lang.Exception
 
 import cats.Eq
@@ -36,8 +37,14 @@ object JobManagerSpec extends Specification {
   implicit val cs = IO.contextShift(ExecutionContext.global)
   implicit val timer = IO.timer(ExecutionContext.global)
 
+  // how long we sleep to simulate work in streams
+  val WorkingTime = 100.milliseconds
+
+  // how long we wait for EACH test to finish. This is important since latchGet may block indefinitely.
+  val Timeout = WorkingTime * 10
+
   def await: Stream[IO, Unit] =
-    Stream.sleep(100.milliseconds)
+    Stream.sleep(WorkingTime)
 
   def mkJobManager: Stream[IO, JobManager[IO, Int, String]] =
     JobManager[IO, Int, String]()
@@ -57,7 +64,7 @@ object JobManagerSpec extends Specification {
         _ <- await
         ids <- Stream.eval(mgr.jobIds)
         status <- Stream.eval(mgr.status(JobId))
-      } yield (submitResult, ids, status)).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield (submitResult, ids, status)).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       submitResult must beTrue
       ids must_== List(JobId)
@@ -81,7 +88,7 @@ object JobManagerSpec extends Specification {
 
         _ <- latchGet(ref, "Finished")
         refAfterRun <- Stream.eval(ref.get)
-      } yield (refAfterStart, refAfterRun)).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield (refAfterStart, refAfterRun)).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       refAfterStart mustEqual "Started"
       refAfterRun mustEqual "Finished"
@@ -109,7 +116,7 @@ object JobManagerSpec extends Specification {
         _ <- await
 
         refAfterCancel <- Stream.eval(ref.get)
-      } yield (statusBeforeCancel, refBeforeCancel, refAfterCancel)).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield (statusBeforeCancel, refBeforeCancel, refAfterCancel)).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
 
       statusBeforeCancel must beSome(Status.Running)
@@ -132,7 +139,7 @@ object JobManagerSpec extends Specification {
         ns <- mgr.notifications.take(2).fold(List[String]()) {
           case (acc, elem) => acc :+ elem
         }
-      } yield ns).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield ns).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       ns mustEqual List("50%", "100%")
     }
@@ -152,7 +159,7 @@ object JobManagerSpec extends Specification {
         // sequence tapped stream manually
         _ <- tappedStream.concurrently(latchGet(ref, "Started") ++ Stream.eval(mgr.cancel(JobId)))
         results <- Stream.eval(ref.get)
-      } yield results).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield results).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       results mustEqual "Started"
     }
@@ -171,7 +178,7 @@ object JobManagerSpec extends Specification {
         _ <- Stream.eval(mgr.submit(Job(2, failingJobStream)))
         _ <- latchGet(ref, "Finished")
         results <- Stream.eval(ref.get)
-      } yield results).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield results).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       results mustEqual "Finished"
     }
@@ -191,7 +198,7 @@ object JobManagerSpec extends Specification {
         _ <- mgr.tap(Job(2, failingJobStream))
         _ <- latchGet(ref, "Finished")
         results <- Stream.eval(ref.get)
-      } yield results).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield results).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       results mustEqual "Finished"
     }
@@ -208,10 +215,10 @@ object JobManagerSpec extends Specification {
         _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
         event <- mgr.events.take(1)
-      } yield event).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield event).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       event must beLike {
-        case Event.Failed(i, _, throwable) => {
+        case Event.Failed(i, _, throwable, _) => {
           i mustEqual JobId
           throwable.getMessage mustEqual "boom"
         }
@@ -230,10 +237,10 @@ object JobManagerSpec extends Specification {
         _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Finished")
         event <- mgr.events.take(1)
-      } yield event).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield event).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       event must beLike {
-        case Event.Completed(i, _) => i mustEqual JobId
+        case Event.Completed(i, _, _) => i mustEqual JobId
       }
     }
 
@@ -256,18 +263,67 @@ object JobManagerSpec extends Specification {
         events <- mgr.events.take(2).fold(List[Event[Int]]()) {
           case (acc, elem) => acc :+ elem
         }
-      } yield events).compile.lastOrError.timeout(1.second).unsafeRunSync
+      } yield events).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       events must have size(2)
       events must contain((event: Event[Int]) => event must beLike {
-        case Event.Completed(i, _) => i mustEqual JobId
+        case Event.Completed(i, _, _) => i mustEqual JobId
       }).exactly(1.times)
 
       events must contain((event: Event[Int]) => event must beLike {
-        case Event.Failed(i, _, ex) =>
+        case Event.Failed(i, _, ex, _) =>
           i mustEqual FailingJobId
           ex.getMessage mustEqual "boom"
       }).exactly(1.times)
+    }
+
+    "report duration when completing a job" in {
+      val JobId = 1
+
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Working")).as(Right(3)) ++ Stream.raiseError[IO](new Exception("boom")).as(Right(4))
+
+      val (startTime, endTime, event) = (for {
+        mgr <- mkJobManager
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- latchGet(ref, "Started")
+        startTime <- Stream.eval(IO(Instant.now()))
+        _ <- latchGet(ref, "Working")
+        endTime <- Stream.eval(IO(Instant.now()))
+        event <- mgr.events.take(1)
+      } yield (startTime, endTime, event)).compile.lastOrError.timeout(Timeout).unsafeRunSync
+
+      event must beLike {
+        case Event.Failed(id, _, ex, duration) =>
+          ex.getMessage mustEqual "boom"
+          duration.toMillis must beCloseTo(endTime.toEpochMilli - startTime.toEpochMilli, 1.significantFigures)
+          id mustEqual JobId
+      }
+    }
+
+    "report duration when a job fails" in {
+      val JobId = 1
+
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
+
+      val (startTime, endTime, event) = (for {
+        mgr <- mkJobManager
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- latchGet(ref, "Started")
+        startTime <- Stream.eval(IO(Instant.now()))
+        _ <- latchGet(ref, "Finished")
+        endTime <- Stream.eval(IO(Instant.now()))
+        event <- mgr.events.take(1)
+      } yield (startTime, endTime, event)).compile.lastOrError.timeout(Timeout).unsafeRunSync
+
+      event must beLike {
+        case Event.Completed(id, _, duration) =>
+          duration.toMillis must beCloseTo(endTime.toEpochMilli - startTime.toEpochMilli, 1.significantFigures)
+          id mustEqual JobId
+      }
     }
   }
 

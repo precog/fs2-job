@@ -16,16 +16,16 @@
 
 package fs2.job
 
-import scala.{Product, Serializable}
+import scala.{Product, Serializable, Option}
 
 import java.lang.Throwable
-import java.time.OffsetDateTime
+import java.time.Instant
 
 import scala.concurrent.duration.Duration
 
 sealed trait Event[I] extends Product with Serializable
 
 object Event {
-  final case class Completed[I](id: I, timestamp: OffsetDateTime) extends Event[I]
-  final case class Failed[I](id: I, timestamp: OffsetDateTime, ex: Throwable) extends Event[I]
+  final case class Completed[I](id: I, startingTime: Instant, duration: Duration) extends Event[I]
+  final case class Failed[I](id: I, startingTime: Instant, ex: Throwable, duration: Duration) extends Event[I]
 }
