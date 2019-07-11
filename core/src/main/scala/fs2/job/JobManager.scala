@@ -20,7 +20,7 @@ package job
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import cats.effect.{Concurrent, ExitCase, Timer}
+import cats.effect.{Concurrent, Timer}
 
 import fs2.concurrent.{Queue, SignallingRef}
 
