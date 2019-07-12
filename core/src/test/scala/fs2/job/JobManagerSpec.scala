@@ -53,15 +53,14 @@ object JobManagerSpec extends Specification {
     "submit a job" in {
       val JobId = 1
 
-      val stream = await.as(Right(1)) ++ Stream(2, 3, 4).map(Right(_)).covary[IO]
-      val notification = Stream(Left("done")).covary[IO]
-
-      val job = Job[IO, Int, String, Int](JobId, stream ++ notification)
+      def jobStream(ref: SignallingRef[IO, String]): Stream[IO, Either[String, Int]] =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
       val (submitResult, ids, status) = (for {
         mgr <- mkJobManager
-        submitResult <- Stream.eval(mgr.submit(job))
-        _ <- await
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        submitResult <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- latchGet(ref, "Started")
         ids <- Stream.eval(mgr.jobIds)
         status <- Stream.eval(mgr.status(JobId))
       } yield (submitResult, ids, status)).compile.lastOrError.timeout(Timeout).unsafeRunSync
