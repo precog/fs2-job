@@ -38,7 +38,7 @@ object JobManagerSpec extends Specification {
   implicit val timer = IO.timer(ExecutionContext.global)
 
   // how long we sleep to simulate work in streams
-  val WorkingTime = 100.milliseconds
+  val WorkingTime = 500.milliseconds
 
   // how long we wait for EACH test to finish. This is important since latchGet may block indefinitely.
   val Timeout = WorkingTime * 10
