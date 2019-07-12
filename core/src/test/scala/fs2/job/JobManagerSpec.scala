@@ -25,7 +25,8 @@ import scala.util.{Either, Left, Right}
 import scala.{Int, List, Unit}
 
 import java.lang.Exception
-import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.temporal.ChronoUnit
 
 import cats.Eq
 import cats.effect.IO
@@ -287,16 +288,16 @@ object JobManagerSpec extends Specification {
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
         _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
-        startTime <- Stream.eval(IO(Instant.now()))
+        startTime <- Stream.eval(IO(OffsetDateTime.now()))
         _ <- latchGet(ref, "Working")
-        endTime <- Stream.eval(IO(Instant.now()))
+        endTime <- Stream.eval(IO(OffsetDateTime.now()))
         event <- mgr.events.take(1)
       } yield (startTime, endTime, event)).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       event must beLike {
         case Event.Failed(id, _, ex, duration) =>
           ex.getMessage mustEqual "boom"
-          duration.toMillis must beCloseTo(endTime.toEpochMilli - startTime.toEpochMilli, 1.significantFigures)
+          duration.toMillis must beCloseTo(startTime.until(endTime, ChronoUnit.MILLIS), 1.significantFigures)
           id mustEqual JobId
       }
     }
@@ -312,15 +313,15 @@ object JobManagerSpec extends Specification {
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
         _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
-        startTime <- Stream.eval(IO(Instant.now()))
+        startTime <- Stream.eval(IO(OffsetDateTime.now()))
         _ <- latchGet(ref, "Finished")
-        endTime <- Stream.eval(IO(Instant.now()))
+        endTime <- Stream.eval(IO(OffsetDateTime.now()))
         event <- mgr.events.take(1)
       } yield (startTime, endTime, event)).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       event must beLike {
         case Event.Completed(id, _, duration) =>
-          duration.toMillis must beCloseTo(endTime.toEpochMilli - startTime.toEpochMilli, 1.significantFigures)
+          duration.toMillis must beCloseTo(startTime.until(endTime, ChronoUnit.MILLIS), 1.significantFigures)
           id mustEqual JobId
       }
     }
