@@ -17,6 +17,8 @@
 package fs2
 package job
 
+import cats.Eq
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -40,8 +42,8 @@ import java.util.concurrent.ConcurrentHashMap
  * from jobs, deterministic cancelation, "fire and forget"
  * submission, and sidecar-style cancelation of direct streams.
  */
-final class JobManager[F[_]: Concurrent: Timer, I, N] private (
-    notificationsQ: Queue[F, Option[N]],
+final class JobManager[F[_]: Concurrent: Timer, I: Eq, N] private (
+    notificationsQ: Queue[F, Option[(I, N)]],
     eventQ: Queue[F, Option[Event[I]]],
     dispatchQ: Queue[F, Stream[F, Nothing]]) {
 
@@ -49,7 +51,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
   private[this] val meta: ConcurrentHashMap[I, Context[F]] = new ConcurrentHashMap[I, Context[F]]
 
-  val notifications: Stream[F, N] = notificationsQ.dequeue.unNoneTerminate
+  val notifications: Stream[F, (I, N)] = notificationsQ.dequeue.unNoneTerminate
   val events: Stream[F, Event[I]] = eventQ.dequeue.unNoneTerminate
 
   /**
@@ -66,6 +68,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     val run = job.run
       .map(_.swap.toOption)
       .unNone
+      .tupleLeft(job.id)
       .map(Some(_))
       .evalMap(notificationsQ.enqueue1)
       .drain
@@ -97,7 +100,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   def tap[R](job: Job[F, I, N, R]): Stream[F, R] = {
     // TODO failure isn't quite deterministic here when job already exists
     val run = job.run evalMap {
-      case Left(n) => notificationsQ.enqueue1(Some(n)).as(None: Option[R])
+      case Left(n) => notificationsQ.enqueue1(Some((job.id, n))).as(None: Option[R])
       case Right(r) => Concurrent[F].pure(Some(r): Option[R])
     }
 
@@ -110,6 +113,14 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
    */
   def jobIds: F[List[I]] =
     Concurrent[F].delay(meta.keys.asScala.toList)
+
+   /**
+    * Returns the notifications associated with the given job id
+    */
+   def notificationsOf(id: I): Stream[F, N] =
+     notificationsQ.dequeue.unNone.filter {
+       case (i, n) => i === id
+     }.map(_._2)
 
   /**
    * Cancels the job by id. If the job does not exist, this call
@@ -215,15 +226,15 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 object JobManager {
 
   @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
-  def apply[F[_]: Concurrent: Timer, I, N](
+  def apply[F[_]: Concurrent: Timer, I: Eq, N](
       jobLimit: Int = 100,
       notificationsLimit: Int = 10,
       eventsLimit: Int = 10)   // all numbers are arbitrary, really
       : Stream[F, JobManager[F, I, N]] = {
 
     for {
-      notificationsQ <- Stream.eval(Queue.bounded[F, Option[N]](notificationsLimit))
-      eventQ <- Stream.eval(Queue.bounded[F, Option[Event[I]]](eventsLimit))
+      notificationsQ <- Stream.eval(Queue.circularBuffer[F, Option[(I, N)]](notificationsLimit))
+      eventQ <- Stream.eval(Queue.circularBuffer[F, Option[Event[I]]](eventsLimit))
       dispatchQ <- Stream.eval(Queue.bounded[F, Stream[F, Nothing]](jobLimit))
 
       initF = Concurrent[F] delay {

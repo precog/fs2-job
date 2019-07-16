@@ -30,6 +30,7 @@ import java.time.temporal.ChronoUnit
 
 import cats.Eq
 import cats.effect.IO
+import cats.instances.int._
 import cats.instances.string._
 import fs2.concurrent.SignallingRef
 import org.specs2.mutable._
@@ -136,7 +137,7 @@ object JobManagerSpec extends Specification {
         _ <- await
 
         // folds keeps pulling and blocks, even after the stream is done emitting
-        ns <- mgr.notifications.take(2).fold(List[String]()) {
+        ns <- mgr.notificationsOf(JobId).take(2).fold(List[String]()) {
           case (acc, elem) => acc :+ elem
         }
       } yield ns).compile.lastOrError.timeout(Timeout).unsafeRunSync
