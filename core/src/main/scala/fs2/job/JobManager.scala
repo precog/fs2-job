@@ -17,8 +17,6 @@
 package fs2
 package job
 
-import cats.Eq
-import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -42,7 +40,7 @@ import java.util.concurrent.ConcurrentHashMap
  * from jobs, deterministic cancelation, "fire and forget"
  * submission, and sidecar-style cancelation of direct streams.
  */
-final class JobManager[F[_]: Concurrent: Timer, I: Eq, N] private (
+final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     notificationsQ: Queue[F, Option[(I, N)]],
     eventQ: Queue[F, Option[Event[I]]],
     dispatchQ: Queue[F, Stream[F, Nothing]]) {
@@ -218,7 +216,7 @@ final class JobManager[F[_]: Concurrent: Timer, I: Eq, N] private (
 object JobManager {
 
   @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
-  def apply[F[_]: Concurrent: Timer, I: Eq, N](
+  def apply[F[_]: Concurrent: Timer, I, N](
       jobLimit: Int = 100,
       notificationsLimit: Int = 10,
       eventsLimit: Int = 10)   // all numbers are arbitrary, really
