@@ -114,14 +114,6 @@ final class JobManager[F[_]: Concurrent: Timer, I: Eq, N] private (
   def jobIds: F[List[I]] =
     Concurrent[F].delay(meta.keys.asScala.toList)
 
-   /**
-    * Returns the notifications associated with the given job id
-    */
-   def notificationsOf(id: I): Stream[F, N] =
-     notificationsQ.dequeue.unNone.filter {
-       case (i, n) => i === id
-     }.map(_._2)
-
   /**
    * Cancels the job by id. If the job does not exist, this call
    * will be ignored.
