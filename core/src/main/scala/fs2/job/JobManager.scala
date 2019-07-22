@@ -140,8 +140,11 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   def status(id: I): F[Option[Status]] =
     Concurrent[F].delay(Option(meta.get(id)).map(_.status))
 
-  private def shutdown: F[Unit] =
-    Concurrent[F].delay(meta.clear()) >> notificationsQ.enqueue1(None) >> eventQ.enqueue1(None)
+  private def shutdown: F[Unit] = for {
+    _ <- Concurrent[F].delay(meta.clear())
+    _ <- Concurrent[F].start(notificationsQ.enqueue1(None))
+    _ <- Concurrent[F].start(eventQ.enqueue1(None))
+  } yield ()
 
   private[this] def managementMachinery[A](
       id: I,

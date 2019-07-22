@@ -325,6 +325,51 @@ object JobManagerSpec extends Specification {
           id mustEqual JobId
       }
     }
+
+    "shutdown even when event queue is full" in {
+      val JobId = 1
+
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
+
+      val refAfter = (for {
+        mgr <- JobManager[IO, Int, String](10, 10, 2)
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+
+        // submit job once
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- latchGet(ref, "Finished")
+
+        ref2 <- Stream.eval(SignallingRef[IO, String]("Not started"))
+
+        // submit again to fill event queue
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref2))))
+        _ <- latchGet(ref2, "Finished")
+
+        refAfter <- Stream.eval(ref.get)
+      } yield refAfter).compile.lastOrError.timeout(Timeout).unsafeRunSync
+
+      refAfter mustEqual "Finished"
+    }
+
+    "shutdown even when notification queue is full" in {
+      val JobId = 1
+
+      // emit exactly two notifications
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.emit(Left("50%")).covary[IO] ++ await.as(Right(2)) ++ Stream.emit(Left("100%")).covary[IO] ++ Stream.eval(ref.set("Finished")).as(Right(3))
+
+      val refAfter = (for {
+        // notification limit is two
+        mgr <- JobManager[IO, Int, String](10, 2, 10)
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- latchGet(ref, "Finished")
+        refAfter <- Stream.eval(ref.get)
+      } yield refAfter).compile.lastOrError.timeout(Timeout).unsafeRunSync
+
+      refAfter mustEqual "Finished"
+    }
   }
 
   // blocks until s.get === expected
