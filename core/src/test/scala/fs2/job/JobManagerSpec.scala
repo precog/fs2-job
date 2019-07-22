@@ -327,8 +327,6 @@ object JobManagerSpec extends Specification {
     }
 
     "shutdown even when event queue is full" in {
-      val JobId = 1
-
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
@@ -338,13 +336,13 @@ object JobManagerSpec extends Specification {
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
 
         // submit job once
-        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref))))
         _ <- latchGet(ref, "Finished")
 
         ref2 <- Stream.eval(SignallingRef[IO, String]("Not started"))
 
         // submit again to fill event queue
-        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref2))))
+        _ <- Stream.eval(mgr.submit(Job(2, jobStream(ref2))))
         _ <- latchGet(ref2, "Finished")
       } yield ()).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
@@ -354,7 +352,7 @@ object JobManagerSpec extends Specification {
     "shutdown even when notification queue is full" in {
       val JobId = 1
 
-      // emit exactly two notifications
+      // emit exactly 2 notifications
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.emit(Left("50%")).covary[IO] ++ await.as(Right(2)) ++ Stream.emit(Left("100%")).covary[IO] ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
