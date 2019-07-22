@@ -142,6 +142,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
   private def shutdown: F[Unit] = for {
     _ <- Concurrent[F].delay(meta.clear())
+    // terminate queues concurrently to always shutdown immediately
     _ <- Concurrent[F].start(notificationsQ.enqueue1(None))
     _ <- Concurrent[F].start(eventQ.enqueue1(None))
   } yield ()
