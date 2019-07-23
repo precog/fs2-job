@@ -25,7 +25,7 @@ import scala.util.{Either, Left, Right}
 import scala.{Int, List, Unit}
 
 import java.lang.Exception
-import java.time.OffsetDateTime
+import java.time.Instant
 import java.time.temporal.ChronoUnit
 
 import cats.Eq
@@ -218,7 +218,7 @@ object JobManagerSpec extends Specification {
       } yield event).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       event must beLike {
-        case Event.Failed(i, _, throwable, _) => {
+        case Event.Failed(i, _, _, throwable) => {
           i mustEqual JobId
           throwable.getMessage mustEqual "boom"
         }
@@ -271,7 +271,7 @@ object JobManagerSpec extends Specification {
       }).exactly(1.times)
 
       events must contain((event: Event[Int]) => event must beLike {
-        case Event.Failed(i, _, ex, _) =>
+        case Event.Failed(i, _, _, ex) =>
           i mustEqual FailingJobId
           ex.getMessage mustEqual "boom"
       }).exactly(1.times)
@@ -288,14 +288,14 @@ object JobManagerSpec extends Specification {
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
         _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
-        startTime <- Stream.eval(IO(OffsetDateTime.now()))
+        startTime <- Stream.eval(IO(Instant.now()))
         _ <- latchGet(ref, "Working")
-        endTime <- Stream.eval(IO(OffsetDateTime.now()))
+        endTime <- Stream.eval(IO(Instant.now()))
         event <- mgr.events.take(1)
       } yield (startTime, endTime, event)).compile.lastOrError.timeout(Timeout).unsafeRunSync
 
       event must beLike {
-        case Event.Failed(id, _, ex, duration) =>
+        case Event.Failed(id, _, duration, ex) =>
           ex.getMessage mustEqual "boom"
           duration.toMillis must beCloseTo(startTime.until(endTime, ChronoUnit.MILLIS), 1.significantFigures)
           id mustEqual JobId
@@ -313,9 +313,9 @@ object JobManagerSpec extends Specification {
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
         _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
-        startTime <- Stream.eval(IO(OffsetDateTime.now()))
+        startTime <- Stream.eval(IO(Instant.now()))
         _ <- latchGet(ref, "Finished")
-        endTime <- Stream.eval(IO(OffsetDateTime.now()))
+        endTime <- Stream.eval(IO(Instant.now()))
         event <- mgr.events.take(1)
       } yield (startTime, endTime, event)).compile.lastOrError.timeout(Timeout).unsafeRunSync
 

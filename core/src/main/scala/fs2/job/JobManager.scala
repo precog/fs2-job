@@ -30,9 +30,8 @@ import scala.util.{Left, Right}
 import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 
 import java.lang.{RuntimeException, SuppressWarnings}
-import java.time.OffsetDateTime
-import java.time.temporal.ChronoUnit
-import java.util.concurrent.ConcurrentHashMap
+import java.time.Instant
+import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 
 /**
  * A coordination mechanism for parallel job management. This
@@ -78,7 +77,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
     putStatusF flatMap { s =>
       if (s)
-        Concurrent[F].delay(OffsetDateTime.now()).flatMap(ts =>
+        epochMillisNow.flatMap(ts =>
           dispatchQ.enqueue1(managementMachinery(job.id, run, ts, false)).as(true))
       else
         Concurrent[F].pure(false)
@@ -101,7 +100,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
       case Right(r) => Concurrent[F].pure(Some(r): Option[R])
     }
 
-    Stream.eval(Concurrent[F].delay(OffsetDateTime.now())).flatMap(ts =>
+    Stream.eval(epochMillisNow).flatMap(ts =>
       managementMachinery(job.id, run.unNone, ts, true))
   }
 
@@ -150,7 +149,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   private[this] def managementMachinery[A](
       id: I,
       in: Stream[F, A],
-      startingTime: OffsetDateTime,
+      startingTime: Duration,
       ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
@@ -196,8 +195,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
         val completeF =
           for {
-            ts <- Concurrent[F].delay(OffsetDateTime.now())
-            duration = startingTime.until(ts, ChronoUnit.MILLIS).milliseconds
+            ts <- epochMillisNow
+            duration = ts - startingTime
             res <- eventQ.enqueue1(Some(Event.Completed(id, ts, duration)))
           } yield res
 
@@ -205,15 +204,18 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
         val handled = reported.handleErrorWith(ex =>
           for {
-            ts <- Stream.eval(Concurrent[F].delay(OffsetDateTime.now()))
-            duration = startingTime.until(ts, ChronoUnit.MILLIS).milliseconds
-            res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, ex, duration))))
+            ts <- Stream.eval(epochMillisNow)
+            duration = ts - startingTime
+            res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, duration, ex))))
           } yield res)
 
         Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >> handled.interruptWhen(s)
       }
     }
   }
+
+  private def epochMillisNow: F[Duration] =
+    Concurrent[F].delay(Instant.now().toEpochMilli).map(Duration(_, TimeUnit.MILLISECONDS))
 }
 
 object JobManager {

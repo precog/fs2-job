@@ -20,11 +20,10 @@ import scala.{Product, Serializable}
 import scala.concurrent.duration.Duration
 
 import java.lang.Throwable
-import java.time.OffsetDateTime
 
 sealed trait Event[I] extends Product with Serializable
 
 object Event {
-  final case class Completed[I](id: I, startingTime: OffsetDateTime, duration: Duration) extends Event[I]
-  final case class Failed[I](id: I, startingTime: OffsetDateTime, ex: Throwable, duration: Duration) extends Event[I]
+  final case class Completed[I](id: I, start: Duration, duration: Duration) extends Event[I]
+  final case class Failed[I](id: I, start: Duration, duration: Duration, ex: Throwable) extends Event[I]
 }
