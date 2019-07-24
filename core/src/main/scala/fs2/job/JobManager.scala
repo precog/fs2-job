@@ -173,7 +173,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   private[this] def managementMachinery[A](
       id: I,
       in: Stream[F, A],
-      startingTime: Duration,
+      startingTime: Timestamp,
       ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
@@ -220,7 +220,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
         val completeF =
           for {
             ts <- epochMillisNow
-            duration = ts - startingTime
+            duration = ts.epoch - startingTime.epoch
             res <- eventQ.enqueue1(Some(Event.Completed(id, ts, duration)))
           } yield res
 
@@ -229,7 +229,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
         val handled = reported.handleErrorWith(ex =>
           for {
             ts <- Stream.eval(epochMillisNow)
-            duration = ts - startingTime
+            duration = ts.epoch - startingTime.epoch
             res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, duration, ex))))
           } yield res)
 
@@ -238,8 +238,11 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     }
   }
 
-  private def epochMillisNow: F[Duration] =
-    Concurrent[F].delay(Instant.now().toEpochMilli).map(Duration(_, TimeUnit.MILLISECONDS))
+  private def epochMillisNow: F[Timestamp] =
+    Concurrent[F]
+      .delay(Instant.now().toEpochMilli)
+      .map(FiniteDuration(_, TimeUnit.MILLISECONDS))
+      .map(Timestamp(_))
 }
 
 object JobManager {
