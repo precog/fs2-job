@@ -17,6 +17,26 @@
 package fs2
 package job
 
+import scala.{Product, Serializable}
 import scala.util.Either
 
-final case class Job[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]])
+import cats.Eq
+
+final case class Job[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]], reportOn: N => Report)
+
+object Job {
+  def unreported[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]]): Job[F, I, N, R] =
+    Job(id, run, (_ => Report.Omit))
+
+  def reportAll[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]]): Job[F, I, N, R] =
+    Job(id, run, (_ => Report.Emit))
+}
+
+sealed trait Report extends Product with Serializable
+
+object Report {
+  case object Emit extends Report
+  case object Omit extends Report
+
+  implicit val reportEquals: Eq[Report] = Eq.fromUniversalEquals[Report]
+}
