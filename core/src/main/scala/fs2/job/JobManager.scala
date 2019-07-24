@@ -1,5 +1,5 @@
 /*
- * Copyright 2014–2018 SlamData Inc.
+ * Copyright 2014–2019 SlamData Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,12 +24,14 @@ import cats.effect.{Concurrent, Timer}
 
 import fs2.concurrent.{Queue, SignallingRef}
 
-import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 import scala.collection.JavaConverters._
+import scala.concurrent.duration._
 import scala.util.{Left, Right}
+import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 
 import java.lang.{RuntimeException, SuppressWarnings}
-import java.util.concurrent.ConcurrentHashMap
+import java.time.Instant
+import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 
 /**
  * A coordination mechanism for parallel job management. This
@@ -39,6 +41,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     notificationsQ: Queue[F, Option[N]],
+    eventQ: Queue[F, Option[Event[I]]],
     dispatchQ: Queue[F, Stream[F, Nothing]]) {
 
   import JobManager._
@@ -46,6 +49,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   private[this] val meta: ConcurrentHashMap[I, Context[F]] = new ConcurrentHashMap[I, Context[F]]
 
   val notifications: Stream[F, N] = notificationsQ.dequeue.unNoneTerminate
+  val events: Stream[F, Event[I]] = eventQ.dequeue.unNoneTerminate
 
   /**
    * Submits a job for parallel execution at the earliest possible moment.
@@ -73,7 +77,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
     putStatusF flatMap { s =>
       if (s)
-        dispatchQ.enqueue1(managementMachinery(job.id, run, false)).as(true)
+        epochMillisNow.flatMap(ts =>
+          dispatchQ.enqueue1(managementMachinery(job.id, run, ts, false)).as(true))
       else
         Concurrent[F].pure(false)
     }
@@ -95,7 +100,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
       case Right(r) => Concurrent[F].pure(Some(r): Option[R])
     }
 
-    managementMachinery(job.id, run.unNone, true)
+    Stream.eval(epochMillisNow).flatMap(ts =>
+      managementMachinery(job.id, run.unNone, ts, true))
   }
 
   /**
@@ -133,12 +139,17 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   def status(id: I): F[Option[Status]] =
     Concurrent[F].delay(Option(meta.get(id)).map(_.status))
 
-  private def shutdown: F[Unit] =
-    Concurrent[F].delay(meta.clear()) >> notificationsQ.enqueue1(None)
+  private def shutdown: F[Unit] = for {
+    _ <- Concurrent[F].delay(meta.clear())
+    // terminate queues concurrently to always shutdown immediately
+    _ <- Concurrent[F].start(notificationsQ.enqueue1(None))
+    _ <- Concurrent[F].start(eventQ.enqueue1(None))
+  } yield ()
 
   private[this] def managementMachinery[A](
       id: I,
       in: Stream[F, A],
+      startingTime: Duration,
       ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
@@ -182,11 +193,29 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
           }
         }
 
-        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >>
-          in.interruptWhen(s)
+        val completeF =
+          for {
+            ts <- epochMillisNow
+            duration = ts - startingTime
+            res <- eventQ.enqueue1(Some(Event.Completed(id, ts, duration)))
+          } yield res
+
+        val reported = in ++ Stream.eval_(completeF)
+
+        val handled = reported.handleErrorWith(ex =>
+          for {
+            ts <- Stream.eval(epochMillisNow)
+            duration = ts - startingTime
+            res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, duration, ex))))
+          } yield res)
+
+        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >> handled.interruptWhen(s)
       }
     }
   }
+
+  private def epochMillisNow: F[Duration] =
+    Concurrent[F].delay(Instant.now().toEpochMilli).map(Duration(_, TimeUnit.MILLISECONDS))
 }
 
 object JobManager {
@@ -194,16 +223,19 @@ object JobManager {
   @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
   def apply[F[_]: Concurrent: Timer, I, N](
       jobLimit: Int = 100,
-      notificationsLimit: Int = 10)   // all numbers are arbitrary, really
+      notificationsLimit: Int = 10,
+      eventsLimit: Int = 10)   // all numbers are arbitrary, really
       : Stream[F, JobManager[F, I, N]] = {
 
     for {
       notificationsQ <- Stream.eval(Queue.bounded[F, Option[N]](notificationsLimit))
+      eventQ <- Stream.eval(Queue.bounded[F, Option[Event[I]]](eventsLimit))
       dispatchQ <- Stream.eval(Queue.bounded[F, Stream[F, Nothing]](jobLimit))
 
       initF = Concurrent[F] delay {
         new JobManager[F, I, N](
           notificationsQ,
+          eventQ,
           dispatchQ)
       }
 
