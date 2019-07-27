@@ -33,8 +33,7 @@ import scala.util.{Left, Right}
 import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 
 import java.lang.{RuntimeException, SuppressWarnings}
-import java.time.Instant
-import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
+import java.util.concurrent.{ConcurrentHashMap}
 
 /**
  * A coordination mechanism for parallel job management. This
@@ -239,9 +238,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   }
 
   private def epochMillisNow: F[Timestamp] =
-    Concurrent[F]
-      .delay(Instant.now().toEpochMilli)
-      .map(FiniteDuration(_, TimeUnit.MILLISECONDS))
+    Timer[F].clock.realTime(MILLISECONDS)
+      .map(FiniteDuration(_, MILLISECONDS))
       .map(Timestamp(_))
 }
 
