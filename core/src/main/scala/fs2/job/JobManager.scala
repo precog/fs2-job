@@ -21,7 +21,6 @@ import cats.effect.{Concurrent, Timer}
 import cats.instances.list._
 import cats.instances.option._
 import cats.syntax.alternative._
-import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -69,10 +68,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
       .unNone
       .tupleLeft(job.id)
       .evalMap({
-        case (i, n) if job.reportOn(n) === Report.Emit =>
-          notificationsQ.enqueue1(Some((i, n)))
-        case (i, n) =>
-          Concurrent[F].unit
+        case (i, n) => notificationsQ.enqueue1(Some((i, n)))
       }).drain
 
     val putStatusF = Concurrent[F] delay {

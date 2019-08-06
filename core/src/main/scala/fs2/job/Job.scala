@@ -17,26 +17,16 @@
 package fs2
 package job
 
-import scala.{Product, Serializable}
+import scala.{Boolean, Left, Right}
 import scala.util.Either
 
-import cats.Eq
+final case class Job[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]]) {
+  def filterNotifications(p: N => Boolean): Job[F, I, N, R] =
+    Job(id, run.filter {
+      case Left(n) => p(n)
+      case Right(_) => true
+    })
 
-final case class Job[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]], reportOn: N => Report)
-
-object Job {
-  def unreported[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]]): Job[F, I, N, R] =
-    Job(id, run, (_ => Report.Omit))
-
-  def reportAll[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]]): Job[F, I, N, R] =
-    Job(id, run, (_ => Report.Emit))
-}
-
-sealed trait Report extends Product with Serializable
-
-object Report {
-  case object Emit extends Report
-  case object Omit extends Report
-
-  implicit val reportEquals: Eq[Report] = Eq.fromUniversalEquals[Report]
+  def silent: Job[F, I, N, R] =
+    filterNotifications(_ => false)
 }

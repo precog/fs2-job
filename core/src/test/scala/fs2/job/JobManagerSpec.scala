@@ -70,7 +70,7 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        submitResult <- Stream.eval(mgr.submit(Job.reportAll(JobId, jobStream(ref))))
+        submitResult <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
         ids <- Stream.eval(mgr.jobIds)
         status <- Stream.eval(mgr.status(JobId))
@@ -90,7 +90,7 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        job = Job.reportAll(JobId, jobStream(ref))
+        job = Job(JobId, jobStream(ref))
 
         submitStatus <- Stream.eval(mgr.submit(job))
         _ <- latchGet(ref, "Started")
@@ -113,7 +113,7 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        job = Job.reportAll(JobId, jobStream(ref))
+        job = Job(JobId, jobStream(ref))
 
         _ <- Stream.eval(mgr.submit(job))
         _ <- latchGet(ref, "Started")
@@ -141,7 +141,7 @@ object JobManagerSpec extends Specification {
 
       for {
         mgr <- mkJobManager
-        submitStatus <- Stream.eval(mgr.submit(Job.reportAll(JobId, jobStream)))
+        submitStatus <- Stream.eval(mgr.submit(Job(JobId, jobStream)))
         _ <- await
         ns <- Stream.eval(mgr.lastNotifications(2))
       } yield ns must beSome(List((JobId, "50%"), (JobId, "100%")))
@@ -156,7 +156,7 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        tappedStream = mgr.tap(Job.reportAll(JobId, jobStream(ref))).fold(List[Int]()) {
+        tappedStream = mgr.tap(Job(JobId, jobStream(ref))).fold(List[Int]()) {
           case (acc, elem) => acc :+ elem
         }
         // sequence tapped stream manually
@@ -175,8 +175,8 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(1, jobStream(ref))))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(2, failingJobStream)))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(2, failingJobStream)))
         _ <- latchGet(ref, "Finished")
         results <- Stream.eval(ref.get)
       } yield results mustEqual "Finished"
@@ -192,9 +192,9 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(1, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref))))
         // boom
-        _ <- mgr.tap(Job.reportAll(2, failingJobStream))
+        _ <- mgr.tap(Job(2, failingJobStream))
         _ <- latchGet(ref, "Finished")
         results <- Stream.eval(ref.get)
       } yield results mustEqual "Finished"
@@ -209,7 +209,7 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(JobId, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
         event <- mgr.events.take(1)
       } yield event must beLike {
@@ -229,7 +229,7 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(JobId, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Finished")
         event <- mgr.events.take(1)
       } yield event must beLike {
@@ -250,8 +250,8 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(JobId, jobStream(ref))))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(FailingJobId, failingJobStream)))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(FailingJobId, failingJobStream)))
         _ <- latchGet(ref, "Finished")
         events <- mgr.events.take(2).fold(List[Event[Int]]()) {
           case (acc, elem) => acc :+ elem
@@ -279,7 +279,7 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(JobId, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
         startTime <- Stream.eval(Timer[IO].clock.realTime(MILLISECONDS))
         _ <- latchGet(ref, "Working")
@@ -304,7 +304,7 @@ object JobManagerSpec extends Specification {
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(JobId, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Started")
         startTime <- Stream.eval(Timer[IO].clock.realTime(MILLISECONDS))
         _ <- latchGet(ref, "Finished")
@@ -329,13 +329,13 @@ object JobManagerSpec extends Specification {
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
 
         // submit job once
-        _ <- Stream.eval(mgr.submit(Job.reportAll(1, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref))))
         _ <- latchGet(ref, "Finished")
 
         ref2 <- Stream.eval(SignallingRef[IO, String]("Not started"))
 
         // submit again to fill event queue
-        _ <- Stream.eval(mgr.submit(Job.reportAll(2, jobStream(ref2))))
+        _ <- Stream.eval(mgr.submit(Job(2, jobStream(ref2))))
         _ <- latchGet(ref2, "Finished")
       } yield ok
     }
@@ -351,12 +351,12 @@ object JobManagerSpec extends Specification {
         // notificationsLimit = 2
         mgr <- JobManager[IO, Int, String](10, 2, 10)
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(JobId, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(JobId, jobStream(ref))))
         _ <- latchGet(ref, "Finished")
       } yield ok
     }
 
-    "report notifications marked as Report.Emit" >>* {
+    "report unfiltered notifications" >>* {
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.emit(Left("50%")).covary[IO] ++ await.as(Right(2)) ++ Stream.emit(Left("100%")).covary[IO] ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
@@ -364,25 +364,38 @@ object JobManagerSpec extends Specification {
         mgr <- mkJobManager
         ref1 <- Stream.eval(SignallingRef[IO, String]("Not started"))
         ref2 <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.unreported(1, jobStream(ref1))))
-        _ <- Stream.eval(mgr.submit(Job.reportAll(2, jobStream(ref2))))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref1)).silent))
+        _ <- Stream.eval(mgr.submit(Job(2, jobStream(ref2))))
         _ <- latchGet(ref1, "Finished")
         _ <- latchGet(ref2, "Finished")
         ns <- Stream.eval(mgr.lastNotifications(2))
       } yield ns must beSome(List((2, "50%"), (2, "100%")))
     }
 
-    "not report notifications marked as Report.Omit" >>* {
+    "not report filtered notifications" >>* {
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.emit(Left("50%")).covary[IO] ++ await.as(Right(2)) ++ Stream.emit(Left("100%")).covary[IO] ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
       for {
         mgr <- mkJobManager
         ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
-        _ <- Stream.eval(mgr.submit(Job.unreported(1, jobStream(ref))))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref)).silent))
         _ <- latchGet(ref, "Finished")
         ns <- Stream.eval(mgr.lastNotifications(1))
       } yield ns must beNone
+    }
+
+    "retain the effects of filtered notifications" >>* {
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.emit(Right(2)).covary[IO] ++ Stream.eval(ref.set("Finished")).as(Left("100%"))
+
+      for {
+        mgr <- mkJobManager
+        ref <- Stream.eval(SignallingRef[IO, String]("Not started"))
+        _ <- Stream.eval(mgr.submit(Job(1, jobStream(ref)).silent))
+        // this would never complete if the last notification's effect was discarded
+        _ <- latchGet(ref, "Finished")
+      } yield ok
     }
   }
 }
