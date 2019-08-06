@@ -38,8 +38,11 @@ object JobManagerSpec extends Specification {
   implicit val cs = IO.contextShift(ExecutionContext.global)
   implicit val timer = IO.timer(ExecutionContext.global)
 
+  // two durations are considered equal if they're within Delta of each other
+  val Delta = 50.milliseconds
+
   // how long we sleep to simulate work in streams
-  val WorkingTime = 500.milliseconds
+  val WorkingTime = Delta * 10
 
   // how long we wait for EACH test to finish. This is important since latchGet may block indefinitely.
   val Timeout = WorkingTime * 10
@@ -289,7 +292,7 @@ object JobManagerSpec extends Specification {
         event must beLike {
           case Event.Failed(id, _, duration, ex) =>
             ex.getMessage mustEqual "boom"
-            duration.toMillis must beCloseTo(endTime - startTime, 1.significantFigures)
+            duration.toMillis must beCloseTo(endTime - startTime, Delta)
             id mustEqual JobId
         }
       }
@@ -313,7 +316,7 @@ object JobManagerSpec extends Specification {
       } yield {
         event must beLike {
           case Event.Completed(id, _, duration) =>
-            duration.toMillis must beCloseTo(endTime - startTime, 1.significantFigures)
+            duration.toMillis must beCloseTo(endTime - startTime, Delta)
             id mustEqual JobId
         }
       }
