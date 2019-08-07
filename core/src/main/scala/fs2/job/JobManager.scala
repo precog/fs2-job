@@ -17,10 +17,12 @@
 package fs2
 package job
 
+import cats.effect.{Concurrent, Timer}
+import cats.instances.list._
+import cats.instances.option._
+import cats.syntax.alternative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-
-import cats.effect.{Concurrent, Timer}
 
 import fs2.concurrent.{Queue, SignallingRef}
 
@@ -30,8 +32,7 @@ import scala.util.{Left, Right}
 import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
 
 import java.lang.{RuntimeException, SuppressWarnings}
-import java.time.Instant
-import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
+import java.util.concurrent.{ConcurrentHashMap}
 
 /**
  * A coordination mechanism for parallel job management. This
@@ -40,7 +41,7 @@ import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
  * submission, and sidecar-style cancelation of direct streams.
  */
 final class JobManager[F[_]: Concurrent: Timer, I, N] private (
-    notificationsQ: Queue[F, Option[N]],
+    notificationsQ: Queue[F, Option[(I, N)]],
     eventQ: Queue[F, Option[Event[I]]],
     dispatchQ: Queue[F, Stream[F, Nothing]]) {
 
@@ -48,7 +49,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
   private[this] val meta: ConcurrentHashMap[I, Context[F]] = new ConcurrentHashMap[I, Context[F]]
 
-  val notifications: Stream[F, N] = notificationsQ.dequeue.unNoneTerminate
+  val notifications: Stream[F, (I, N)] = notificationsQ.dequeue.unNoneTerminate
   val events: Stream[F, Event[I]] = eventQ.dequeue.unNoneTerminate
 
   /**
@@ -65,9 +66,10 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     val run = job.run
       .map(_.swap.toOption)
       .unNone
-      .map(Some(_))
-      .evalMap(notificationsQ.enqueue1)
-      .drain
+      .tupleLeft(job.id)
+      .evalMap({
+        case (i, n) => notificationsQ.enqueue1(Some((i, n)))
+      }).drain
 
     val putStatusF = Concurrent[F] delay {
       val attempt = Context[F](Status.Pending, None)
@@ -96,7 +98,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   def tap[R](job: Job[F, I, N, R]): Stream[F, R] = {
     // TODO failure isn't quite deterministic here when job already exists
     val run = job.run evalMap {
-      case Left(n) => notificationsQ.enqueue1(Some(n)).as(None: Option[R])
+      case Left(n) => notificationsQ.enqueue1(Some((job.id, n))).as(None: Option[R])
       case Right(r) => Concurrent[F].pure(Some(r): Option[R])
     }
 
@@ -109,6 +111,20 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
    */
   def jobIds: F[List[I]] =
     Concurrent[F].delay(meta.keys.asScala.toList)
+
+  /**
+   * Returns the last n notifications emitted by jobs. Returns None if
+   * notifications are not available.
+   */
+  def lastNotifications(n: Int): F[Option[List[(I, N)]]] =
+    maybeDequeueN(notificationsQ, n)
+
+  /**
+   * Returns the last n `Event`s. Returns None if events are
+   * not available.
+   */
+  def lastEvents(n: Int): F[Option[List[Event[I]]]] =
+    maybeDequeueN(eventQ, n)
 
   /**
    * Cancels the job by id. If the job does not exist, this call
@@ -146,10 +162,13 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     _ <- Concurrent[F].start(eventQ.enqueue1(None))
   } yield ()
 
+  private def maybeDequeueN[A](q: Queue[F, Option[A]], n: Int): F[Option[List[A]]] =
+    q.tryDequeueChunk1(n).map(_.map(_.toList.unite))
+
   private[this] def managementMachinery[A](
       id: I,
       in: Stream[F, A],
-      startingTime: Duration,
+      startingTime: Timestamp,
       ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
@@ -196,7 +215,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
         val completeF =
           for {
             ts <- epochMillisNow
-            duration = ts - startingTime
+            duration = ts.epoch - startingTime.epoch
             res <- eventQ.enqueue1(Some(Event.Completed(id, ts, duration)))
           } yield res
 
@@ -205,7 +224,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
         val handled = reported.handleErrorWith(ex =>
           for {
             ts <- Stream.eval(epochMillisNow)
-            duration = ts - startingTime
+            duration = ts.epoch - startingTime.epoch
             res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, duration, ex))))
           } yield res)
 
@@ -214,8 +233,10 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     }
   }
 
-  private def epochMillisNow: F[Duration] =
-    Concurrent[F].delay(Instant.now().toEpochMilli).map(Duration(_, TimeUnit.MILLISECONDS))
+  private def epochMillisNow: F[Timestamp] =
+    Timer[F].clock.realTime(MILLISECONDS)
+      .map(FiniteDuration(_, MILLISECONDS))
+      .map(Timestamp(_))
 }
 
 object JobManager {
@@ -228,8 +249,8 @@ object JobManager {
       : Stream[F, JobManager[F, I, N]] = {
 
     for {
-      notificationsQ <- Stream.eval(Queue.bounded[F, Option[N]](notificationsLimit))
-      eventQ <- Stream.eval(Queue.bounded[F, Option[Event[I]]](eventsLimit))
+      notificationsQ <- Stream.eval(Queue.bounded[F, Option[(I, N)]](notificationsLimit))
+      eventQ <- Stream.eval(Queue.circularBuffer[F, Option[Event[I]]](eventsLimit))
       dispatchQ <- Stream.eval(Queue.bounded[F, Stream[F, Nothing]](jobLimit))
 
       initF = Concurrent[F] delay {
