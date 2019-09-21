@@ -21,7 +21,7 @@ lazy val core = project
   .settings(name := "fs2-job")
   .settings(
     libraryDependencies ++= Seq(
-        "co.fs2" %% "fs2-core" % "1.0.5",
+        "co.fs2" %% "fs2-core" % "2.0.1",
         "org.specs2" %% "specs2-core" % "4.6.0" % "test"),
 
     addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.0"),
