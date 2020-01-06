@@ -24,7 +24,7 @@ lazy val core = project
         "co.fs2" %% "fs2-core" % "2.1.0",
         "org.specs2" %% "specs2-core" % "4.8.1" % "test"),
 
-    addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.0"),
+    addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"),
     performMavenCentralSync := false,
     publishAsOSSProject := true)
   .enablePlugins(AutomateHeaderPlugin)
