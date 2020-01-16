@@ -17,7 +17,7 @@
 package fs2
 package job
 
-import cats.effect.{Concurrent, Timer}
+import cats.effect.{Concurrent, Resource, Timer}
 import cats.instances.list._
 import cats.instances.option._
 import cats.syntax.alternative._
@@ -43,7 +43,7 @@ import java.util.concurrent.{ConcurrentHashMap}
 final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     notificationsQ: Queue[F, Option[(I, N)]],
     eventQ: Queue[F, Option[Event[I]]],
-    dispatchQ: Queue[F, Stream[F, Nothing]]) {
+    val dispatchQ: Queue[F, Stream[F, Nothing]]) {
 
   import JobManager._
 
@@ -246,22 +246,17 @@ object JobManager {
       jobLimit: Int = 100,
       notificationsLimit: Int = 10,
       eventsLimit: Int = 10)   // all numbers are arbitrary, really
-      : Stream[F, JobManager[F, I, N]] = {
+      : Resource[F, JobManager[F, I, N]] = {
 
-    for {
-      notificationsQ <- Stream.eval(Queue.bounded[F, Option[(I, N)]](notificationsLimit))
-      eventQ <- Stream.eval(Queue.circularBuffer[F, Option[Event[I]]](eventsLimit))
-      dispatchQ <- Stream.eval(Queue.bounded[F, Stream[F, Nothing]](jobLimit))
+    val mgrF = for {
+      notificationsQ <- Queue.bounded[F, Option[(I, N)]](notificationsLimit)
+      eventQ <- Queue.circularBuffer[F, Option[Event[I]]](eventsLimit)
+      dispatchQ <- Queue.bounded[F, Stream[F, Nothing]](jobLimit)
+    } yield new JobManager[F, I, N](notificationsQ, eventQ, dispatchQ)
 
-      initF = Concurrent[F] delay {
-        new JobManager[F, I, N](
-          notificationsQ,
-          eventQ,
-          dispatchQ)
-      }
-
-      back <- Stream.bracket(initF)(_.shutdown).concurrently(dispatchQ.dequeue.parJoin(jobLimit))
-    } yield back
+    Resource.make(mgrF)(_.shutdown) evalTap { mgr =>
+      Concurrent[F].start(mgr.dispatchQ.dequeue.parJoin(jobLimit).compile.drain)
+    }
   }
 
   private final case class Context[F[_]](status: Status, cancel: Option[F[Unit]])
