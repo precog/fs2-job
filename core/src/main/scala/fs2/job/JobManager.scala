@@ -260,8 +260,7 @@ object JobManager {
           dispatchQ)
       }
 
-      jm <- Stream.bracket(initF)(_.shutdown)
-      back <- Stream.emit(jm).concurrently(dispatchQ.dequeue.parJoin(jobLimit))
+      back <- Stream.bracket(initF)(_.shutdown).concurrently(dispatchQ.dequeue.parJoin(jobLimit))
     } yield back
   }
 
