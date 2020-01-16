@@ -22,7 +22,7 @@ lazy val core = project
   .settings(
     libraryDependencies ++= Seq(
         "co.fs2" %% "fs2-core" % "2.1.0",
-        "org.specs2" %% "specs2-core" % "4.8.1" % "test"),
+        "org.specs2" %% "specs2-core" % "4.8.2" % "test"),
 
     addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"),
     performMavenCentralSync := false,
