@@ -43,7 +43,7 @@ import java.util.concurrent.{ConcurrentHashMap}
 final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     notificationsQ: Queue[F, Option[(I, N)]],
     eventQ: Queue[F, Option[Event[I]]],
-    val dispatchQ: Queue[F, Stream[F, Nothing]]) {
+    dispatchQ: Queue[F, Stream[F, Nothing]]) {
 
   import JobManager._
 

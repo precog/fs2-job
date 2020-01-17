@@ -55,7 +55,7 @@ object JobManagerSpec extends Specification {
   def await: Stream[IO, Unit] =
     Stream.sleep(WorkingTime)
 
-  def sleep: IO[Unit] = 
+  def sleep: IO[Unit] =
     IO.sleep(WorkingTime)
 
   def jobManager: Resource[IO, JobManager[IO, Int, String]] =
@@ -86,7 +86,7 @@ object JobManagerSpec extends Specification {
         }
       }
     }
-  
+
     "execute a job to completion" >>* {
       val JobId = 42
 
