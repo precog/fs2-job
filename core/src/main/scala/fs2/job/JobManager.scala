@@ -248,15 +248,23 @@ object JobManager {
       eventsLimit: Int = 10)   // all numbers are arbitrary, really
       : Resource[F, JobManager[F, I, N]] = {
 
-    val mgrF = for {
-      notificationsQ <- Queue.bounded[F, Option[(I, N)]](notificationsLimit)
-      eventQ <- Queue.circularBuffer[F, Option[Event[I]]](eventsLimit)
-      dispatchQ <- Queue.bounded[F, Stream[F, Nothing]](jobLimit)
-    } yield new JobManager[F, I, N](notificationsQ, eventQ, dispatchQ)
+    val s = for {
+      notificationsQ <- Stream.eval(Queue.bounded[F, Option[(I, N)]](notificationsLimit))
+      eventQ <- Stream.eval(Queue.circularBuffer[F, Option[Event[I]]](eventsLimit))
+      dispatchQ <- Stream.eval(Queue.bounded[F, Stream[F, Nothing]](jobLimit))
 
-    Resource.make(mgrF)(_.shutdown) evalTap { mgr =>
-      Concurrent[F].start(mgr.dispatchQ.dequeue.parJoin(jobLimit).compile.drain)
-    }
+      initF = Concurrent[F] delay {
+        new JobManager[F, I, N](
+          notificationsQ,
+          eventQ,
+          dispatchQ)
+      }
+
+      jm <- Stream.bracketWeak(initF)(_.shutdown)
+      back <- Stream.emit(jm).concurrently(dispatchQ.dequeue.parJoin(jobLimit))
+    } yield back
+
+    s.compile.resource.lastOrError
   }
 
   private final case class Context[F[_]](status: Status, cancel: Option[F[Unit]])
