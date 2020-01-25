@@ -17,7 +17,7 @@
 package fs2
 package job
 
-import cats.effect.{Concurrent, Timer}
+import cats.effect.{Concurrent, Resource, Timer}
 import cats.instances.list._
 import cats.instances.option._
 import cats.syntax.alternative._
@@ -246,9 +246,9 @@ object JobManager {
       jobLimit: Int = 100,
       notificationsLimit: Int = 10,
       eventsLimit: Int = 10)   // all numbers are arbitrary, really
-      : Stream[F, JobManager[F, I, N]] = {
+      : Resource[F, JobManager[F, I, N]] = {
 
-    for {
+    val s = for {
       notificationsQ <- Stream.eval(Queue.bounded[F, Option[(I, N)]](notificationsLimit))
       eventQ <- Stream.eval(Queue.circularBuffer[F, Option[Event[I]]](eventsLimit))
       dispatchQ <- Stream.eval(Queue.bounded[F, Stream[F, Nothing]](jobLimit))
@@ -260,9 +260,11 @@ object JobManager {
           dispatchQ)
       }
 
-      jm <- Stream.bracket(initF)(_.shutdown)
+      jm <- Stream.bracketWeak(initF)(_.shutdown)
       back <- Stream.emit(jm).concurrently(dispatchQ.dequeue.parJoin(jobLimit))
     } yield back
+
+    s.compile.resource.lastOrError
   }
 
   private final case class Context[F[_]](status: Status, cancel: Option[F[Unit]])
