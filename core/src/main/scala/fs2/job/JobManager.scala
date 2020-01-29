@@ -1,5 +1,5 @@
 /*
- * Copyright 2014–2019 SlamData Inc.
+ * Copyright 2014–2020 SlamData Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import cats.syntax.functor._
 
 import fs2.concurrent.{Queue, SignallingRef}
 
-import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.util.{Left, Right}
 import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
@@ -45,6 +44,7 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     eventQ: Queue[F, Option[Event[I]]],
     dispatchQ: Queue[F, Stream[F, Nothing]]) {
 
+  import CompatConverters.All._
   import JobManager._
 
   private[this] val meta: ConcurrentHashMap[I, Context[F]] = new ConcurrentHashMap[I, Context[F]]

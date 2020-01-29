@@ -1,5 +1,5 @@
 /*
- * Copyright 2014–2019 SlamData Inc.
+ * Copyright 2014–2020 SlamData Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import org.specs2.mutable._
 import org.specs2.execute.AsResult
 import org.specs2.specification.core.Fragment
 
-object JobManagerSpec extends Specification {
+class JobManagerSpec extends Specification {
   implicit val cs = IO.contextShift(ExecutionContext.global)
   implicit val timer = IO.timer(ExecutionContext.global)
 
@@ -82,7 +82,7 @@ object JobManagerSpec extends Specification {
         } yield {
           submitResult must beTrue
           ids must_== List(JobId)
-          status must beSome(Status.Running)
+          status must beSome(Status.Running: Status)
         }
       }
     }
@@ -134,7 +134,7 @@ object JobManagerSpec extends Specification {
 
           refAfterCancel <- ref.get
         } yield {
-          statusBeforeCancel must beSome(Status.Running)
+          statusBeforeCancel must beSome(Status.Running: Status)
           refBeforeCancel mustEqual "Started"
           refAfterCancel mustEqual "Working"
         }
