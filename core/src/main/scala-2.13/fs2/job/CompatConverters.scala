@@ -14,19 +14,10 @@
  * limitations under the License.
  */
 
-package fs2
-package job
+package fs2.job
 
-import scala.{Boolean, Left, Right}
-import scala.util.Either
+import scala.jdk.CollectionConverters
 
-final case class Job[F[_], I, N, R](id: I, run: Stream[F, Either[N, R]]) {
-  def filterNotifications(p: N => Boolean): Job[F, I, N, R] =
-    Job(id, run.filter {
-      case Left(n) => p(n)
-      case Right(_) => true
-    })
-
-  def silent: Job[F, I, N, R] =
-    filterNotifications(_ => false)
+private[job] object CompatConverters {
+  val All = CollectionConverters
 }
