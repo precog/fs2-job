@@ -24,7 +24,7 @@ jobs:
       - name: Setup Git Actor
         run: git config github.actor slamdata-bot
       - name: Compile and test
-        run: ./sbt -DisIsolatedEnv=${ISOLATED_ENV:=false} ++${{ matrix.scala }} checkHeaders test:compile "testOnly -- failtrace"
+        run: ./sbt -DisIsolatedEnv=${ISOLATED_ENV:=false} ++${{ matrix.scala }} checkHeaders test:compile test "testOnly -- failtrace"
       - name: Upload target
         uses: actions/upload-artifact@v1
         with:
