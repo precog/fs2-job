@@ -58,9 +58,9 @@ jobs:
           java-version: ${{ env.JDK }}
       - name: Setup Git Actor
         run: git config github.actor slamdata-bot
-      - name: Run transferPublishAndTagResources
-        run: ./sbt transferPublishAndTagResources
-      - name: Run tectonicPublishAndTag
+      - name: Rransfer Common Resources
+        run: $SBT transferCommonResources
+      - name: Run publish and Tag
         run: ./scripts/publishAndTag 'slamdata/fs2-job'
 
   commonResources:
