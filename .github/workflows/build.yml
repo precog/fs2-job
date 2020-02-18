@@ -58,8 +58,14 @@ jobs:
           java-version: ${{ env.JDK }}
       - name: Setup Git Actor
         run: git config github.actor slamdata-bot
-      - name: Rransfer Common Resources
+      - name: Transfer Common Resources
         run: $SBT transferCommonResources
+      - name: Export common secrets
+        run: $SBT exportSecretsForActions
+      - name: Transfer Publish and Tag Resources
+        run: $SBT transferPublishAndTagResources
+      - name: Common setup
+        run: ./scripts/core/commonSetup
       - name: Run publish and Tag
         run: ./scripts/publishAndTag 'slamdata/fs2-job'
 
@@ -77,14 +83,22 @@ jobs:
         uses: actions/download-artifact@v1
         with:
           name: target
-      - name: Setup Git Actor
-        run: git config github.actor slamdata-bot
-      - name: Install common resources
-        run: ./sbt transferCommonResources
       - name: Install ruby
         uses: actions/setup-ruby@v1
         with:
           ruby-version: '2.6'
+      - name: Create scripts dir
+        run: mkdir ./scripts
+      - name: Setup Git Actor
+        run: git config github.actor slamdata-bot
+      - name: Set up JDK ${{ env.JDK }}
+        uses: actions/setup-java@v1
+        with:
+          java-version: ${{ env.JDK }}
+      - name: Transfer Common Resources
+        run: $SBT transferCommonResources
+      - name: Export common secrets
+        run: $SBT exportSecretsForActions
       - name: Common setup
         run: ./scripts/core/commonSetup
       - name: Set env vars
