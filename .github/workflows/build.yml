@@ -40,7 +40,7 @@ jobs:
   publishandtag:
     name: Publish and Tag
     needs: [build]
-    if: github.event_name != 'pull_request' && (contains(github.head_ref, 'backport/v.*') || contains(github.head_ref, 'master'))
+    if: github.event_name != 'pull_request' && (contains(github.ref, 'backport/v.*') || contains(github.ref, 'master'))
     strategy:
       matrix:
         scala: [2.12.10]
