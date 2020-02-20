@@ -1,4 +1,4 @@
-name: fs2jobbuild
+name: build
 
 on:
   pull_request:
