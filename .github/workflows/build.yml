@@ -31,13 +31,13 @@ jobs:
         run: git config github.actor slamdata-bot
       - name: Compile and test
         run: $SBT ++${{ matrix.scala }} ci 
-      - name: Upload target
+      - name: Upload working directory
         uses: actions/upload-artifact@v1
         with:
-          name: target-${{ matrix.scala }}
-          path: target
+          name: working-dir-${{ matrix.scala }}
+          path: .
 
-  publishandtag:
+  publish-and-tag:
     name: Publish and Tag
     needs: [build]
     if: github.event_name != 'pull_request' && (contains(github.ref, 'backport/v.*') || contains(github.ref, 'master'))
@@ -51,7 +51,7 @@ jobs:
       - name: Download target artifacts
         uses: actions/download-artifact@v1
         with:
-          name: target-${{ matrix.scala }}
+          name: working-dir-${{ matrix.scala }}
       - name: Set up JDK ${{ env.JDK }}
         uses: actions/setup-java@v1
         with:
@@ -75,11 +75,14 @@ jobs:
       - name: Run publish and Tag
         run: ./scripts/publishAndTag 'slamdata/fs2-job'
 
-  commonResources:
+  auto-merge:
     name: Auto Merge
     if: github.event_name == 'pull_request' && contains(github.head_ref, 'version-bump')
     needs: [build]
     runs-on: [ubuntu-latest]
+    strategy:
+      matrix:
+        scala: [2.12.10]
     steps:
       - name: Checkout branch
         uses: actions/checkout@v2
@@ -88,7 +91,7 @@ jobs:
       - name: Download target artifacts
         uses: actions/download-artifact@v1
         with:
-          name: target
+          name: working-dir-${{ matrix.scala }}
       - name: Install ruby
         uses: actions/setup-ruby@v1
         with:
