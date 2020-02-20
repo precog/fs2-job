@@ -1,3 +1,4 @@
+import scala.Some
 import scala.collection.Seq
 
 ThisBuild / crossScalaVersions := Seq("2.12.10", "2.13.1")
