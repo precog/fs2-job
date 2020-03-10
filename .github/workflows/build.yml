@@ -11,6 +11,7 @@ env:
   JDK: 1.8
   REPO_SLUG: ${{ github.repository }}
   ENCRYPTION_PASSWORD: ${{ secrets.ENCRYPTION_PASSWORD }}
+  GITHUB_ACTOR: slamdata-bot
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
@@ -31,7 +32,7 @@ jobs:
       - name: Setup Git Actor
         run: git config github.actor slamdata-bot
       - name: Compile and test
-        run: $SBT ++${{ matrix.scala }} ci 
+        run: $SBT ++${{ matrix.scala }} ci
       - name: Upload working directory
         uses: actions/upload-artifact@v1
         with:
@@ -115,7 +116,6 @@ jobs:
         run: ./scripts/commonSetup
       - name: Set env vars
         run: |
-          echo ::set-env name=VERSIONS::$(git diff HEAD^1 | grep -e '^[-+][0-9]' | sed 's/^[+\-]//' | sed 's/\.[0-9]*$//' | uniq | wc -l)
           echo ::set-env name=CLONE_DIR::$(mktemp -d "/tmp/slamdata-bump.XXXXXXXX")
           echo ::set-env name=PR_NUMBER::$(echo "$GITHUB_REF" | cut -d'/' -f3)
           echo ::set-env name=PULL_REQUEST::$(echo "true")
