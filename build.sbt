@@ -4,11 +4,13 @@ import scala.collection.Seq
 ThisBuild / crossScalaVersions := Seq("2.12.10", "2.13.1")
 ThisBuild / scalaVersion := "2.12.10"
 
-homepage in ThisBuild := Some(url("https://github.com/slamdata/fs2-job"))
+ThisBuild / githubRepository := "fs2-job"
+
+homepage in ThisBuild := Some(url("https://github.com/precog/fs2-job"))
 
 scmInfo in ThisBuild := Some(ScmInfo(
-  url("https://github.com/slamdata/fs2-job"),
-  "scm:git@github.com:slamdata/fs2-job.git"))
+  url("https://github.com/precog/fs2-job"),
+  "scm:git@github.com:precog/fs2-job.git"))
 
 // Include to also publish a project's tests
 lazy val publishTestsSettings = Seq(
