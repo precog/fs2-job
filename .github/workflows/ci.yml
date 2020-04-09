@@ -13,6 +13,8 @@ on:
   push:
     branches: [master, backport/v*]
 
+if: "!(github.event_name == 'pull_request' && github.event.pull_request.draft)"
+
 env:
   SBT: ./sbt
   REPO_SLUG: ${{ github.repository }}
@@ -23,7 +25,6 @@ env:
 jobs:
   build:
     name: Build and Test
-    if: "!(github.event_name == 'pull_request' && github.event.pull_request.draft)"
     strategy:
       matrix:
         os: [ubuntu-latest]
