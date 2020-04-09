@@ -23,7 +23,7 @@ env:
 jobs:
   build:
     name: Build and Test
-    if: github.event_name != 'pull_request' || github.event.ready_for_review == true
+    if: github.event_name != 'pull_request' || github.event.draft
     strategy:
       matrix:
         os: [ubuntu-latest]
