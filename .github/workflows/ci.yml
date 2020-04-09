@@ -23,7 +23,7 @@ env:
 jobs:
   build:
     name: Build and Test
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft
+    # if: github.event_name != 'pull_request' || github.event.pull_request.draft
     strategy:
       matrix:
         os: [ubuntu-latest]
@@ -31,6 +31,10 @@ jobs:
         java: [adopt@1.8]
     runs-on: ${{ matrix.os }}
     steps:
+      - run: |
+        echo ${{ toJson(github.event) }}
+        exit 1
+
       - name: Checkout current branch (fast)
         uses: actions/checkout@v2
 
