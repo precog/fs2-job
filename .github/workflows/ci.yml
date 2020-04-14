@@ -10,6 +10,7 @@ name: Continuous Integration
 on:
   pull_request:
     branches: [master, backport/v*]
+    types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [master, backport/v*]
 
@@ -23,10 +24,11 @@ env:
 jobs:
   build:
     name: Build and Test
+    if: '!(github.event_name == ''pull_request'' && github.event.pull_request.draft)'
     strategy:
       matrix:
         os: [ubuntu-latest]
-        scala: [2.12.10]
+        scala: [2.12.10, 2.13.1]
         java: [adopt@1.8]
     runs-on: ${{ matrix.os }}
     steps:
@@ -42,22 +44,44 @@ jobs:
         uses: actions/cache@v1
         with:
           path: ~/.ivy2/cache
-          key: ${{ runner.os }}-sbt-ivy-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
+          key: ${{ runner.os }}-sbt-ivy-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
 
-      - name: Cache coursier
+      - name: Cache coursier (generic)
         uses: actions/cache@v1
         with:
           path: ~/.coursier/cache/v1
-          key: ${{ runner.os }}-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
+          key: ${{ runner.os }}-generic-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
+
+      - name: Cache coursier (linux)
+        if: contains(runner.os, 'linux')
+        uses: actions/cache@v1
+        with:
+          path: ~/.cache/coursier/v1
+          key: ${{ runner.os }}-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
+
+      - name: Cache coursier (macOS)
+        if: contains(runner.os, 'macos')
+        uses: actions/cache@v1
+        with:
+          path: ~/Library/Caches/Coursier/v1
+          key: ${{ runner.os }}-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
+
+      - name: Cache coursier (windows)
+        if: contains(runner.os, 'windows')
+        uses: actions/cache@v1
+        with:
+          path: ~/AppData/Local/Coursier/Cache/v1
+          key: ${{ runner.os }}-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
 
       - name: Cache sbt
         uses: actions/cache@v1
         with:
           path: ~/.sbt
-          key: ${{ runner.os }}-sbt-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
+          key: ${{ runner.os }}-sbt-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
 
-      - name: Recreate the OG coursier cache dir
-        run: mkdir -p ~/.coursier/cache/v1
+      - name: Common sbt setup
+        if: env.ENCRYPTION_PASSWORD != null
+        run: $SBT ++${{ matrix.scala }} transferCommonResources exportSecretsForActions
 
       - name: Check that workflows are up to date
         run: $SBT ++${{ matrix.scala }} githubWorkflowCheck
@@ -105,34 +129,70 @@ jobs:
         uses: actions/cache@v1
         with:
           path: ~/.ivy2/cache
-          key: ${{ runner.os }}-sbt-ivy-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
+          key: ${{ runner.os }}-sbt-ivy-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
 
-      - name: Cache coursier
+      - name: Cache coursier (generic)
         uses: actions/cache@v1
         with:
           path: ~/.coursier/cache/v1
-          key: ${{ runner.os }}-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
+          key: ${{ runner.os }}-generic-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
+
+      - name: Cache coursier (linux)
+        if: contains(runner.os, 'linux')
+        uses: actions/cache@v1
+        with:
+          path: ~/.cache/coursier/v1
+          key: ${{ runner.os }}-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
+
+      - name: Cache coursier (macOS)
+        if: contains(runner.os, 'macos')
+        uses: actions/cache@v1
+        with:
+          path: ~/Library/Caches/Coursier/v1
+          key: ${{ runner.os }}-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
+
+      - name: Cache coursier (windows)
+        if: contains(runner.os, 'windows')
+        uses: actions/cache@v1
+        with:
+          path: ~/AppData/Local/Coursier/Cache/v1
+          key: ${{ runner.os }}-sbt-coursier-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
 
       - name: Cache sbt
         uses: actions/cache@v1
         with:
           path: ~/.sbt
-          key: ${{ runner.os }}-sbt-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}
+          key: ${{ runner.os }}-sbt-cache-${{ hashFiles('**/*.sbt') }}-${{ hashFiles('project/build.properties') }}-${{ hashFiles('.versions.json') }}
 
       - name: Download target directory 'target' (2.12.10)
         uses: actions/download-artifact@v1
         with:
           name: target-${{ matrix.os }}-2.12.10-${{ matrix.java }}-target
+          path: target
+
+      - name: Download target directory 'target' (2.13.1)
+        uses: actions/download-artifact@v1
+        with:
+          name: target-${{ matrix.os }}-2.13.1-${{ matrix.java }}-target
+          path: target
 
       - name: Download target directory 'core/target' (2.12.10)
         uses: actions/download-artifact@v1
         with:
           name: target-${{ matrix.os }}-2.12.10-${{ matrix.java }}-core_target
+          path: core/target
+
+      - name: Download target directory 'core/target' (2.13.1)
+        uses: actions/download-artifact@v1
+        with:
+          name: target-${{ matrix.os }}-2.13.1-${{ matrix.java }}-core_target
+          path: core/target
 
       - name: Download target directory 'project/target'
         uses: actions/download-artifact@v1
         with:
           name: target-${{ matrix.os }}-${{ matrix.java }}-project_target
+          path: project/target
 
       - name: Install Ruby
         uses: actions/setup-ruby@v1
