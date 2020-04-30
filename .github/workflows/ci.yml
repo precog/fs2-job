@@ -37,8 +37,8 @@ jobs:
 
       - name: Echo exit
         run: |
-        echo ${{ toJson(github.event) }}
-        exit 1
+          echo ${{ toJson(github.event) }}
+          exit 1
 
       - name: Setup Java and Scala
         uses: olafurpg/setup-scala@v5
