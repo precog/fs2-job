@@ -32,6 +32,11 @@ jobs:
         java: [adopt@1.8]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Echo exit
+        run: |
+        echo ${{ toJson(github.event) }}
+        exit 1
+
       - name: Checkout current branch (fast)
         uses: actions/checkout@v2
 
@@ -82,9 +87,6 @@ jobs:
       - name: Common sbt setup
         if: env.ENCRYPTION_PASSWORD != null
         run: $SBT ++${{ matrix.scala }} transferCommonResources exportSecretsForActions
-
-      - name: Check that workflows are up to date
-        run: $SBT ++${{ matrix.scala }} githubWorkflowCheck
 
       - run: $SBT ++${{ matrix.scala }} ci
 
