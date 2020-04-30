@@ -32,13 +32,13 @@ jobs:
         java: [adopt@1.8]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Checkout current branch (fast)
+        uses: actions/checkout@v2
+
       - name: Echo exit
         run: |
         echo ${{ toJson(github.event) }}
         exit 1
-
-      - name: Checkout current branch (fast)
-        uses: actions/checkout@v2
 
       - name: Setup Java and Scala
         uses: olafurpg/setup-scala@v5
