@@ -28,9 +28,9 @@ import fs2.concurrent.{Queue, SignallingRef}
 
 import scala.concurrent.duration._
 import scala.util.{Left, Right}
-import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
+import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, StringContext, Unit}
 
-import java.lang.{RuntimeException, SuppressWarnings}
+import java.lang.{IllegalStateException, SuppressWarnings}
 import java.util.concurrent.{ConcurrentHashMap}
 
 /**
@@ -67,9 +67,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
       .map(_.swap.toOption)
       .unNone
       .tupleLeft(job.id)
-      .evalMap({
-        case (i, n) => notificationsQ.enqueue1(Some((i, n)))
-      }).drain
+      .evalMap(t => notificationsQ.enqueue1(Some(t)))
+      .drain
 
     val putStatusF = Concurrent[F] delay {
       val attempt = Context[F](Status.Pending, None)
@@ -172,42 +171,44 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
       ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
-        lazy val frontF: F[Unit] = {
+        lazy val frontF: F[Boolean] = {
           Concurrent[F].delay(Option(meta.get(id))) flatMap {
             case Some(old @ Context(Status.Pending, _)) =>
+              val running = Context(Status.Running, Some(s.set(true)))
+
               val casF = Concurrent[F] delay {
-                meta.replace(id, old, Context(Status.Running, Some(s.set(true))))
+                meta.replace(id, old, running)
               }
 
               casF flatMap { result =>
                 if (result)
-                  Concurrent[F].unit
+                  Concurrent[F].pure(true)
                 else
                   frontF
               }
 
             case Some(Context(Status.Canceled, _)) =>
-              Concurrent[F].delay(meta.remove(id)).void
+              Concurrent[F].pure(false)
 
             case Some(Context(Status.Running, _)) =>
-              Concurrent[F].raiseError(new RuntimeException("job already running!"))    // TODO
+              Concurrent[F].raiseError(new IllegalStateException(s"A job with id '$id' is already running!"))    // TODO
 
             case None =>
               if (ignoreAbsence) {
-                val casF = Concurrent[F] delay {
-                  val attempt = Context(Status.Running, Some(s.set(true)))
+                val attempt = Context(Status.Running, Some(s.set(true)))
 
+                val casF = Concurrent[F] delay {
                   Option(meta.putIfAbsent(id, attempt)).isEmpty
                 }
 
                 casF flatMap { result =>
                   if (result)
-                    Concurrent[F].unit
+                    Concurrent[F].pure(true)
                   else
                     frontF
                 }
               } else {
-                Concurrent[F].unit
+                Concurrent[F].pure(false)
               }
           }
         }
@@ -228,7 +229,8 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
             res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, duration, ex))))
           } yield res)
 
-        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >> handled.interruptWhen(s)
+        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void)
+          .ifM(ifTrue = handled.interruptWhen(s), ifFalse = Stream.empty)
       }
     }
   }

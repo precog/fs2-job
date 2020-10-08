@@ -19,7 +19,7 @@ package job
 
 import scala.Predef._
 
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{ExecutionContext, TimeoutException}
 import scala.concurrent.duration._
 import scala.util.{Either, Left, Right}
 import scala.{Int, List, Unit}
@@ -28,6 +28,7 @@ import java.lang.Exception
 
 import cats.Eq
 import cats.effect.{IO, Resource, Timer}
+import cats.effect.concurrent.Deferred
 import cats.instances.string._
 import fs2.concurrent.SignallingRef
 import org.specs2.mutable._
@@ -58,8 +59,8 @@ class JobManagerSpec extends Specification {
   def sleep: IO[Unit] =
     IO.sleep(WorkingTime)
 
-  def jobManager: Resource[IO, JobManager[IO, Int, String]] =
-    JobManager[IO, Int, String]()
+  def jobManager(jobLimit: Int = 10): Resource[IO, JobManager[IO, Int, String]] =
+    JobManager[IO, Int, String](jobLimit = jobLimit, jobConcurrency = jobLimit)
 
   // blocks until s.get === expected
   def latchGet(s: SignallingRef[IO, String], expected: String): IO[Unit] =
@@ -72,7 +73,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]): Stream[IO, Either[String, Int]] =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           submitResult <- mgr.submit(Job(JobId, jobStream(ref)))
@@ -93,7 +94,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]): Stream[IO, Either[String, Int]] =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           job = Job(JobId, jobStream(ref))
@@ -117,7 +118,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]): Stream[IO, Either[String, Int]] =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Working")).as(Right(3)) ++ await.as(Right(4)) ++ Stream.eval(ref.set("Finished")).as(Right(5))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           job = Job(JobId, jobStream(ref))
@@ -141,13 +142,59 @@ class JobManagerSpec extends Specification {
       }
     }
 
+    "avoid running a job when canceled while pending" >>* {
+      val JobId1 = 42
+      val JobId2 = 43
+
+      def jobStream(ref: SignallingRef[IO, String], latch: Deferred[IO, Unit])
+          : Stream[IO, Either[String, Int]] =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++
+          Stream.eval(latch.get).as(Right(2)) ++
+          Stream.eval(ref.set("Finished")).as(Right(3))
+
+      // limit = 1 to ensure 2nd job is pending
+      jobManager(jobLimit = 1) use { mgr =>
+        for {
+          ref <- SignallingRef[IO, String]("Not started")
+          latch <- Deferred[IO, Unit]
+
+          job1 = Job(JobId1, jobStream(ref, latch))
+          job2 = Job(JobId2, Stream.eval(ref.set("Nope")).as(Right[String, Int](1)))
+
+          submit1 <- mgr.submit(job1)
+          _ <- latchGet(ref, "Started")
+          submit2 <- mgr.submit(job2)
+
+          ids <- mgr.jobIds
+          status1 <- mgr.status(JobId1)
+          status2 <- mgr.status(JobId2)
+
+          _ <- mgr.cancel(JobId2)
+          _ <- latch.complete(())
+
+          // This should timeout unless the canceled job is run
+          r <- latchGet(ref, "Nope").timeout(2 seconds).attempt
+        } yield {
+          submit1 must beTrue
+          submit2 must beTrue
+          ids must_== List(JobId1, JobId2)
+          status1 must beSome(Status.Running)
+          status2 must beSome(Status.Pending)
+
+          r must beLeft.like {
+            case t: TimeoutException => true
+          }
+        }
+      }
+    }
+
     "emit notifications" >>* {
       val JobId = 42
 
       val jobStream: Stream[IO, Either[String, Int]] =
         Stream(Right(1), Right(2), Left("50%"), Right(3), Right(4), Left("100%")).covary[IO]
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           submitStatus <- mgr.submit(Job(JobId, jobStream))
           _ <- sleep
@@ -162,7 +209,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]): Stream[IO, Either[String, Int]] =
         await.as(Right(1)) ++ Stream.eval(ref.set("Started")).as(Right(2)) ++ await.as(Right(3)) ++ Stream.eval(ref.set("Finished")).as(Right(4))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           tappedStream = mgr.tap(Job(JobId, jobStream(ref))).fold(List[Int]()) {
@@ -184,7 +231,7 @@ class JobManagerSpec extends Specification {
       val failingJobStream =
         Stream.emit(Right(1)).covary[IO] ++ Stream.raiseError[IO](new Exception("boom")).as(Right(2)) ++ Stream.emit(Right(3)).covary[IO]
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(1, jobStream(ref)))
@@ -202,7 +249,7 @@ class JobManagerSpec extends Specification {
       val failingJobStream =
         Stream.emit(Right(1)).covary[IO] ++ Stream.raiseError[IO](new Exception("boom")).as(Right(2)) ++ Stream.emit(Right(3)).covary[IO]
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(1, jobStream(ref)))
@@ -220,7 +267,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.raiseError[IO](new Exception("boom")) ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(JobId, jobStream(ref)))
@@ -241,7 +288,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.eval(ref.set("Finished")).as(Right(2))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(JobId, jobStream(ref)))
@@ -263,7 +310,7 @@ class JobManagerSpec extends Specification {
       val failingJobStream =
         Stream.emit(Right(1)).covary[IO] ++ Stream.raiseError[IO](new Exception("boom")).as(Right(2)) ++ Stream.emit(Right(3)).covary[IO]
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(JobId, jobStream(ref)))
@@ -287,13 +334,13 @@ class JobManagerSpec extends Specification {
       }
     }
 
-    "report duration when completing a job" >>* {
+    "report duration when a job fails" >>* {
       val JobId = 1
 
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Working")).as(Right(3)) ++ Stream.raiseError[IO](new Exception("boom")).as(Right(4))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(JobId, jobStream(ref)))
@@ -313,13 +360,13 @@ class JobManagerSpec extends Specification {
       }
     }
 
-    "report duration when a job fails" >>* {
+    "report duration when completing a job" >>* {
       val JobId = 1
 
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ await.as(Right(2)) ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(JobId, jobStream(ref)))
@@ -381,7 +428,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.emit(Left("50%")).covary[IO] ++ await.as(Right(2)) ++ Stream.emit(Left("100%")).covary[IO] ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref1 <- SignallingRef[IO, String]("Not started")
           ref2 <- SignallingRef[IO, String]("Not started")
@@ -398,7 +445,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.emit(Left("50%")).covary[IO] ++ await.as(Right(2)) ++ Stream.emit(Left("100%")).covary[IO] ++ Stream.eval(ref.set("Finished")).as(Right(3))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(1, jobStream(ref)).silent)
@@ -412,7 +459,7 @@ class JobManagerSpec extends Specification {
       def jobStream(ref: SignallingRef[IO, String]) =
         Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.emit(Right(2)).covary[IO] ++ Stream.eval(ref.set("Finished")).as(Left("100%"))
 
-      jobManager use { mgr =>
+      jobManager() use { mgr =>
         for {
           ref <- SignallingRef[IO, String]("Not started")
           _ <- mgr.submit(Job(1, jobStream(ref)).silent)
