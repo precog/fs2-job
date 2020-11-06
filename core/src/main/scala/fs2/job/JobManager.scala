@@ -245,7 +245,8 @@ object JobManager {
   def apply[F[_]: Concurrent: Timer, I, N](
       jobLimit: Int = 100,
       notificationsLimit: Int = 10,
-      eventsLimit: Int = 10)   // all numbers are arbitrary, really
+      eventsLimit: Int = 10,
+      jobConcurrency: Int = 100)
       : Resource[F, JobManager[F, I, N]] = {
 
     val s = for {
@@ -261,7 +262,7 @@ object JobManager {
       }
 
       jm <- Stream.bracketWeak(initF)(_.shutdown)
-      back <- Stream.emit(jm).concurrently(dispatchQ.dequeue.parJoin(jobLimit))
+      back <- Stream.emit(jm).concurrently(dispatchQ.dequeue.parJoin(jobConcurrency))
     } yield back
 
     s.compile.resource.lastOrError
