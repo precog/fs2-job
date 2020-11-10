@@ -1,8 +1,8 @@
 import scala.Some
 import scala.collection.Seq
 
-ThisBuild / crossScalaVersions := Seq("2.12.10", "2.13.1")
-ThisBuild / scalaVersion := "2.12.10"
+ThisBuild / crossScalaVersions := Seq("2.12.12", "2.13.1")
+ThisBuild / scalaVersion := "2.12.12"
 
 ThisBuild / githubRepository := "fs2-job"
 
@@ -27,8 +27,8 @@ lazy val core = project
   .settings(name := "fs2-job")
   .settings(
     libraryDependencies ++= Seq(
-        "co.fs2" %% "fs2-core" % "2.2.1",
-        "org.specs2" %% "specs2-core" % "4.8.2" % "test"),
+        "co.fs2" %% "fs2-core" % "2.4.4",
+        "org.specs2" %% "specs2-core" % "4.10.5" % "test"),
 
     addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"),
     performMavenCentralSync := false,
