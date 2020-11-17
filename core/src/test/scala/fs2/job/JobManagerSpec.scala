@@ -374,7 +374,8 @@ class JobManagerSpec extends Specification {
           event must beLike {
             case Event.Failed(id, _, duration, ex) =>
               ex.getMessage mustEqual "boom"
-              duration.toMillis must beCloseTo(endTime - startTime, Delta)
+              duration.toMillis must be_>=(WorkingTime.toMillis)
+              duration.toMillis must be_<(2 * WorkingTime.toMillis)
               id mustEqual JobId
           }
         }
@@ -399,7 +400,8 @@ class JobManagerSpec extends Specification {
         } yield {
           event must beLike {
             case Event.Completed(id, _, duration) =>
-              duration.toMillis must beCloseTo(endTime - startTime, Delta)
+              duration.toMillis must be_>=(WorkingTime.toMillis)
+              duration.toMillis must be_<(2 * WorkingTime.toMillis)
               id mustEqual JobId
           }
         }
