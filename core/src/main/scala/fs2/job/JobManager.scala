@@ -24,9 +24,9 @@ import fs2.concurrent.{Queue, SignallingRef}
 
 import scala.concurrent.duration._
 import scala.util.{Left, Right}
-import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, StringContext, Unit}
+import scala.{Boolean, Int, List, Option, None, Nothing, Some, StringContext, Unit}
 
-import java.lang.{IllegalStateException, SuppressWarnings}
+import java.lang.IllegalStateException
 import java.util.concurrent.{ConcurrentHashMap}
 
 /**
@@ -57,7 +57,6 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
    * Attempting to submit a job with the same id as a pre-existing job will
    * produce false.
    */
-  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments", "org.wartremover.warts.Equals"))
   def submit[R](job: Job[F, I, N, R]): F[Boolean] = {
     val run = job.run
       .map(_.swap.toOption)
@@ -125,7 +124,6 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
    * Cancels the job by id. If the job does not exist, this call
    * will be ignored.
    */
-  @SuppressWarnings(Array("org.wartremover.warts.Recursion"))
   def cancel(id: I): F[Unit] = {
     Concurrent[F].delay(meta.get(id)) flatMap {
       case Context(Status.Running, Some(cancelF)) =>
@@ -244,8 +242,6 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 }
 
 object JobManager {
-
-  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
   def apply[F[_]: Concurrent: Timer, I, N](
       jobLimit: Int = 100,
       notificationsLimit: Int = 10,
