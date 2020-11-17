@@ -18,6 +18,7 @@ package fs2
 package job
 
 import scala.Predef._
+import scala.Option
 
 import scala.concurrent.{ExecutionContext, TimeoutException}
 import scala.concurrent.duration._
@@ -133,10 +134,12 @@ class JobManagerSpec extends Specification {
           _ <- mgr.cancel(JobId)
           _ <- sleep
 
+          statusAfterCancel <- mgr.status(JobId)
           refAfterCancel <- ref.get
         } yield {
-          statusBeforeCancel must beSome(Status.Running: Status)
+          statusBeforeCancel must beSome(Status.Running)
           refBeforeCancel mustEqual "Started"
+          statusAfterCancel must beNone
           refAfterCancel mustEqual "Working"
         }
       }
@@ -296,6 +299,24 @@ class JobManagerSpec extends Specification {
           event <- mgr.events.take(1).compile.lastOrError
         } yield event must beLike {
           case Event.Completed(i, _, _) => i mustEqual JobId
+        }
+      }
+    }
+
+    "job status should reflect termination when event emitted" >>* {
+      val JobId = 1
+
+      jobManager() use { mgr =>
+        for {
+          ref <- SignallingRef[IO, String]("Not started")
+          status <- Deferred[IO, Option[Status]]
+          _ <- mgr.events.take(1)
+                .evalMap(_ => mgr.status(JobId).flatMap(status.complete(_)))
+                .compile.lastOrError.start
+          _ <- mgr.submit(Job(JobId, Stream(Right(1), Right(2))))
+          r <- status.get
+        } yield {
+          r must beNone // Will be Some(Running) if jm isn't updated before emitting event
         }
       }
     }

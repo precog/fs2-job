@@ -18,11 +18,7 @@ package fs2
 package job
 
 import cats.effect.{Concurrent, Resource, Timer}
-import cats.instances.list._
-import cats.instances.option._
-import cats.syntax.alternative._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.implicits._
 
 import fs2.concurrent.{Queue, SignallingRef}
 
@@ -171,7 +167,12 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
       ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
-        lazy val frontF: F[Boolean] = {
+        val unregisterJob =
+          Concurrent[F].delay(meta.remove(id)).void
+
+        // None indicates the job should not be started, otherwise returns the
+        // context expected prior to termination
+        lazy val frontF: F[Option[Context[F]]] =
           Concurrent[F].delay(Option(meta.get(id))) flatMap {
             case Some(old @ Context(Status.Pending, _)) =>
               val running = Context(Status.Running, Some(s.set(true)))
@@ -182,13 +183,13 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
               casF flatMap { result =>
                 if (result)
-                  Concurrent[F].pure(true)
+                  Concurrent[F].pure(Some(running))
                 else
                   frontF
               }
 
             case Some(Context(Status.Canceled, _)) =>
-              Concurrent[F].pure(false)
+              unregisterJob.as(None)
 
             case Some(Context(Status.Running, _)) =>
               Concurrent[F].raiseError(new IllegalStateException(s"A job with id '$id' is already running!"))    // TODO
@@ -203,34 +204,35 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
                 casF flatMap { result =>
                   if (result)
-                    Concurrent[F].pure(true)
+                    Concurrent[F].pure(Some(attempt))
                   else
                     frontF
                 }
               } else {
-                Concurrent[F].pure(false)
+                Concurrent[F].pure(None)
               }
           }
-        }
 
-        val completeF =
+        def notifyTerminated(f: FiniteDuration => Event[I]): F[Unit] =
           for {
             ts <- epochMillisNow
             duration = ts.epoch - startingTime.epoch
-            res <- eventQ.enqueue1(Some(Event.Completed(id, ts, duration)))
-          } yield res
+            _ <- unregisterJob
+            _ <- eventQ.enqueue1(Some(f(duration)))
+          } yield ()
+
+        val completeF =
+          notifyTerminated(Event.Completed(id, startingTime, _))
 
         val reported = in ++ Stream.eval_(completeF)
 
-        val handled = reported.handleErrorWith(ex =>
-          for {
-            ts <- Stream.eval(epochMillisNow)
-            duration = ts.epoch - startingTime.epoch
-            res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, duration, ex))))
-          } yield res)
+        val handled =
+          reported.handleErrorWith(ex =>
+            Stream.eval_(notifyTerminated(Event.Failed(id, startingTime, _, ex))))
 
-        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void)
-          .ifM(ifTrue = handled.interruptWhen(s), ifFalse = Stream.empty)
+        // Conditional `remove` so we only cleanup if the job is still ours
+        Stream.bracket(frontF)(_.traverse_(c => Concurrent[F].delay(meta.remove(id, c))))
+          .flatMap(_.fold[Stream[F, A]](Stream.empty)(_ => handled.interruptWhen(s)))
       }
     }
   }
