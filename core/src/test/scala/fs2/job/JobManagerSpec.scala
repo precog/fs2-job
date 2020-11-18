@@ -137,7 +137,7 @@ class JobManagerSpec extends Specification {
           statusAfterCancel <- mgr.status(JobId)
           refAfterCancel <- ref.get
         } yield {
-          statusBeforeCancel must beSome(Status.Running)
+          statusBeforeCancel must beSome(Status.Running: Status)
           refBeforeCancel mustEqual "Started"
           statusAfterCancel must beNone
           refAfterCancel mustEqual "Working"
@@ -181,8 +181,8 @@ class JobManagerSpec extends Specification {
           submit1 must beTrue
           submit2 must beTrue
           ids must_== List(JobId1, JobId2)
-          status1 must beSome(Status.Running)
-          status2 must beSome(Status.Pending)
+          status1 must beSome(Status.Running: Status)
+          status2 must beSome(Status.Pending: Status)
 
           r must beLeft.like {
             case t: TimeoutException => true
