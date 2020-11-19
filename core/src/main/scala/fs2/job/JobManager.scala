@@ -18,19 +18,15 @@ package fs2
 package job
 
 import cats.effect.{Concurrent, Resource, Timer}
-import cats.instances.list._
-import cats.instances.option._
-import cats.syntax.alternative._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.implicits._
 
 import fs2.concurrent.{Queue, SignallingRef}
 
 import scala.concurrent.duration._
 import scala.util.{Left, Right}
-import scala.{Array, Boolean, Int, List, Option, None, Nothing, Some, Unit}
+import scala.{Boolean, Int, List, Option, None, Nothing, Some, StringContext, Unit}
 
-import java.lang.{RuntimeException, SuppressWarnings}
+import java.lang.IllegalStateException
 import java.util.concurrent.{ConcurrentHashMap}
 
 /**
@@ -61,15 +57,13 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
    * Attempting to submit a job with the same id as a pre-existing job will
    * produce false.
    */
-  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments", "org.wartremover.warts.Equals"))
   def submit[R](job: Job[F, I, N, R]): F[Boolean] = {
     val run = job.run
       .map(_.swap.toOption)
       .unNone
       .tupleLeft(job.id)
-      .evalMap({
-        case (i, n) => notificationsQ.enqueue1(Some((i, n)))
-      }).drain
+      .evalMap(t => notificationsQ.enqueue1(Some(t)))
+      .drain
 
     val putStatusF = Concurrent[F] delay {
       val attempt = Context[F](Status.Pending, None)
@@ -130,7 +124,6 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
    * Cancels the job by id. If the job does not exist, this call
    * will be ignored.
    */
-  @SuppressWarnings(Array("org.wartremover.warts.Recursion"))
   def cancel(id: I): F[Unit] = {
     Concurrent[F].delay(meta.get(id)) flatMap {
       case Context(Status.Running, Some(cancelF)) =>
@@ -172,63 +165,72 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
       ignoreAbsence: Boolean): Stream[F, A] = {
     Stream force {
       SignallingRef[F, Boolean](false) map { s =>
-        lazy val frontF: F[Unit] = {
+        val unregisterJob =
+          Concurrent[F].delay(meta.remove(id)).void
+
+        // None indicates the job should not be started, otherwise returns the
+        // context expected prior to termination
+        lazy val frontF: F[Option[Context[F]]] =
           Concurrent[F].delay(Option(meta.get(id))) flatMap {
             case Some(old @ Context(Status.Pending, _)) =>
+              val running = Context(Status.Running, Some(s.set(true)))
+
               val casF = Concurrent[F] delay {
-                meta.replace(id, old, Context(Status.Running, Some(s.set(true))))
+                meta.replace(id, old, running)
               }
 
               casF flatMap { result =>
                 if (result)
-                  Concurrent[F].unit
+                  Concurrent[F].pure(Some(running))
                 else
                   frontF
               }
 
             case Some(Context(Status.Canceled, _)) =>
-              Concurrent[F].delay(meta.remove(id)).void
+              unregisterJob.as(None)
 
             case Some(Context(Status.Running, _)) =>
-              Concurrent[F].raiseError(new RuntimeException("job already running!"))    // TODO
+              Concurrent[F].raiseError(new IllegalStateException(s"A job with id '$id' is already running!"))    // TODO
 
             case None =>
               if (ignoreAbsence) {
-                val casF = Concurrent[F] delay {
-                  val attempt = Context(Status.Running, Some(s.set(true)))
+                val attempt = Context(Status.Running, Some(s.set(true)))
 
+                val casF = Concurrent[F] delay {
                   Option(meta.putIfAbsent(id, attempt)).isEmpty
                 }
 
                 casF flatMap { result =>
                   if (result)
-                    Concurrent[F].unit
+                    Concurrent[F].pure(Some(attempt))
                   else
                     frontF
                 }
               } else {
-                Concurrent[F].unit
+                Concurrent[F].pure(None)
               }
           }
-        }
 
-        val completeF =
+        def notifyTerminated(f: FiniteDuration => Event[I]): F[Unit] =
           for {
             ts <- epochMillisNow
             duration = ts.epoch - startingTime.epoch
-            res <- eventQ.enqueue1(Some(Event.Completed(id, ts, duration)))
-          } yield res
+            _ <- unregisterJob
+            _ <- eventQ.enqueue1(Some(f(duration)))
+          } yield ()
+
+        val completeF =
+          notifyTerminated(Event.Completed(id, startingTime, _))
 
         val reported = in ++ Stream.eval_(completeF)
 
-        val handled = reported.handleErrorWith(ex =>
-          for {
-            ts <- Stream.eval(epochMillisNow)
-            duration = ts.epoch - startingTime.epoch
-            res <- Stream.eval_(eventQ.enqueue1(Some(Event.Failed(id, ts, duration, ex))))
-          } yield res)
+        val handled =
+          reported.handleErrorWith(ex =>
+            Stream.eval_(notifyTerminated(Event.Failed(id, startingTime, _, ex))))
 
-        Stream.bracket(frontF)(_ => Concurrent[F].delay(meta.remove(id)).void) >> handled.interruptWhen(s)
+        // Conditional `remove` so we only cleanup if the job is still ours
+        Stream.bracket(frontF)(_.traverse_(c => Concurrent[F].delay(meta.remove(id, c))))
+          .flatMap(_.fold[Stream[F, A]](Stream.empty)(_ => handled.interruptWhen(s)))
       }
     }
   }
@@ -240,8 +242,6 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 }
 
 object JobManager {
-
-  @SuppressWarnings(Array("org.wartremover.warts.DefaultArguments"))
   def apply[F[_]: Concurrent: Timer, I, N](
       jobLimit: Int = 100,
       notificationsLimit: Int = 10,
