@@ -21,11 +21,15 @@ import scala.concurrent.duration.FiniteDuration
 
 import java.lang.Throwable
 
-sealed trait Event[I] extends Product with Serializable
+sealed trait Event[I] extends Product with Serializable {
+  def id: I
+  def start: Timestamp
+  def duration: FiniteDuration
+}
 
 object Event {
   final case class Completed[I](id: I, start: Timestamp, duration: FiniteDuration) extends Event[I]
   final case class Failed[I](id: I, start: Timestamp, duration: FiniteDuration, ex: Throwable) extends Event[I]
 }
 
-final case class Timestamp(val epoch: FiniteDuration)
+final case class Timestamp(epoch: FiniteDuration)
