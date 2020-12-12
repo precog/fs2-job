@@ -177,6 +177,11 @@ class JobManagerSpec extends Specification {
 
           // This should timeout unless the canceled job is run
           r <- latchGet(ref, "Nope").timeout(2 seconds).attempt
+          events <- mgr.events.take(2).compile.toVector
+
+          canceled = events collectFirst {
+            case c @ Event.Canceled(_, _, _) => c
+          }
         } yield {
           submit1 must beTrue
           submit2 must beTrue
@@ -186,6 +191,12 @@ class JobManagerSpec extends Specification {
 
           r must beLeft.like {
             case t: TimeoutException => true
+          }
+
+          canceled must beSome.like {
+            case Event.Canceled(id, _, d) =>
+              id must_=== JobId2
+              d must_=== Duration.Zero
           }
         }
       }
@@ -299,6 +310,25 @@ class JobManagerSpec extends Specification {
           event <- mgr.events.take(1).compile.lastOrError
         } yield event must beLike {
           case Event.Completed(i, _, _) => i mustEqual JobId
+        }
+      }
+    }
+
+    "report when a job is canceled" >>* {
+      val JobId = 1
+
+      def jobStream(ref: SignallingRef[IO, String]) =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++ Stream.never[IO]
+
+      jobManager() use { mgr =>
+        for {
+          ref <- SignallingRef[IO, String]("Not started")
+          _ <- mgr.submit(Job(JobId, jobStream(ref)))
+          _ <- latchGet(ref, "Started")
+          _ <- mgr.cancel(JobId)
+          event <- mgr.events.take(1).compile.lastOrError
+        } yield event must beLike {
+          case Event.Canceled(id, _, _) => id mustEqual JobId
         }
       }
     }

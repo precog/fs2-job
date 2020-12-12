@@ -28,8 +28,21 @@ sealed trait Event[I] extends Product with Serializable {
 }
 
 object Event {
-  final case class Completed[I](id: I, start: Timestamp, duration: FiniteDuration) extends Event[I]
-  final case class Failed[I](id: I, start: Timestamp, duration: FiniteDuration, ex: Throwable) extends Event[I]
+  final case class Completed[I](
+      id: I,
+      start: Timestamp,
+      duration: FiniteDuration) extends Event[I]
+
+  final case class Failed[I](
+      id: I,
+      start: Timestamp,
+      duration: FiniteDuration,
+      ex: Throwable) extends Event[I]
+
+  final case class Canceled[I](
+      id: I,
+      start: Timestamp,
+      duration: FiniteDuration) extends Event[I]
 }
 
 final case class Timestamp(epoch: FiniteDuration)
