@@ -45,8 +45,25 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 
   private[this] val meta: ConcurrentHashMap[I, Context[F]] = new ConcurrentHashMap[I, Context[F]]
 
-  val notifications: Stream[F, (I, N)] = notificationsQ.dequeue.unNoneTerminate
-  val events: Stream[F, Event[I]] = eventQ.dequeue.unNoneTerminate
+  /**
+   * Job notification event stream.
+   *
+   * If jobs produce notifications, this must be consumed to avoid eventually
+   * blocking job progress.
+   */
+  val notifications: Stream[F, (I, N)] =
+    notificationsQ.dequeue.unNoneTerminate
+
+  /**
+   * Job termination event stream. It is reentrant w.r.t. the [[JobManager]]
+   * and so safe to call [[JobManager]] methods in response to events.
+   *
+   * This may be safely ignored without affecting job progress if there is no
+   * interest in when jobs terminate, however if this is consumed too slowly,
+   * events may be missed.
+   */
+  val events: Stream[F, Event[I]] =
+    eventQ.dequeue.unNoneTerminate
 
   /**
    * Submits a job for parallel execution at the earliest possible moment.
@@ -240,10 +257,23 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
 }
 
 object JobManager {
+  /**
+   * Construct a new [[JobManager]] as a `Resource` that, when finalized,
+   * interrupts all running jobs and the `events` and `notifications` streams.
+   *
+   * @param jobLimit the number of jobs that may be pending before calls to
+   *                 `submit` (semantically) block
+   * @param notificationsLimit the number of unconsumed notifications after which
+   *                           notification attempts will begin (semantically)
+   *                           blocking jobs
+   * @param eventsLimit the number of unconsumed termination events after which
+   *                    the oldest termination event will be evicted.
+   * @param jobConcurrency the number of submitted jobs to run concurrently.
+   */
   def apply[F[_]: Concurrent: Timer, I, N](
       jobLimit: Int = 100,
       notificationsLimit: Int = 10,
-      eventsLimit: Int = 10,
+      eventsLimit: Int = 100,
       jobConcurrency: Int = 100)
       : Resource[F, JobManager[F, I, N]] = {
 

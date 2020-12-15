@@ -21,9 +21,17 @@ import scala.concurrent.duration.FiniteDuration
 
 import java.lang.Throwable
 
+/**
+ * Managed job termination event.
+ */
 sealed trait Event[I] extends Product with Serializable {
+  /** Job identifier. */
   def id: I
+
+  /** When the job started (as opposed to submitted). */
   def start: Timestamp
+
+  /** Duration the job ran before terminating. */
   def duration: FiniteDuration
 }
 
