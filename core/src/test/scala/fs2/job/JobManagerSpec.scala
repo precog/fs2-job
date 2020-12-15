@@ -51,7 +51,7 @@ class JobManagerSpec extends Specification {
 
   implicit class RunExample(s: String) {
     def >>*[A: AsResult](io: => IO[A]): Fragment =
-      s >> io.timeout(Timeout).unsafeRunSync
+      s >> io.timeout(Timeout).unsafeRunSync()
   }
 
   def await: Stream[IO, Unit] =
