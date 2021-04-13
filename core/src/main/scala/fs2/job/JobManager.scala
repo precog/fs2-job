@@ -68,7 +68,17 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
     val putStatusF = Concurrent[F] delay {
       val attempt = Context[F](Status.Pending, None)
 
-      Option(meta.putIfAbsent(job.id, attempt)).isEmpty
+      val canceledToPending =
+        new java.util.function.BiFunction[Context[F], Context[F], Context[F]] {
+          def apply(orig: Context[F], n: Context[F]) = orig.status match {
+            case Status.Canceled => attempt
+            case _ => orig
+          }
+        }
+
+      val merged = Option(meta.merge(job.id, attempt, canceledToPending))
+
+      merged.map(_.status === Status.Pending).getOrElse(false)
     }
 
     putStatusF flatMap { s =>
@@ -101,10 +111,10 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
   }
 
   /**
-   * Returns the currently-running jobs by ID.
+   * Returns the job IDs of the jobs that are currently running or pending.
    */
   def jobIds: F[List[I]] =
-    Concurrent[F].delay(meta.keys.asScala.toList)
+    Concurrent[F].delay(meta.asScala.filter(_._2.status =!= Status.Canceled).keys.toList)
 
   /**
    * Returns the last n notifications emitted by jobs. Returns None if

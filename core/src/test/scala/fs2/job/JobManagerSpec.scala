@@ -191,6 +191,60 @@ class JobManagerSpec extends Specification {
       }
     }
 
+    "resubmitting a canceled job that was pending should be accepted" >>* {
+      val JobId1 = 42
+      val JobId2 = 43
+
+      def jobStream(ref: SignallingRef[IO, String], latch: Deferred[IO, Unit])
+          : Stream[IO, Either[String, Int]] =
+        Stream.eval(ref.set("Started")).as(Right(1)) ++
+          Stream.eval(latch.get).as(Right(2)) ++
+          Stream.eval(ref.set("Finished")).as(Right(3))
+
+      // limit = 1 to ensure 2nd job is pending
+      jobManager(jobLimit = 1) use { mgr =>
+        for {
+          ref <- SignallingRef[IO, String]("Not started")
+          latch <- Deferred[IO, Unit]
+
+          job1 = Job(JobId1, jobStream(ref, latch))
+          job2 = Job(JobId2, Stream.eval(ref.set("Nope")).as(Right[String, Int](1)))
+
+          submit1 <- mgr.submit(job1)
+          _ <- latchGet(ref, "Started")
+          submit2a <- mgr.submit(job2)
+
+          ids1 <- mgr.jobIds
+          status1 <- mgr.status(JobId1)
+          status2a <- mgr.status(JobId2)
+
+          _ <- mgr.cancel(JobId2)
+
+          status2b <- mgr.status(JobId2)
+          ids2 <- mgr.jobIds
+          // Resubmitting canceled job should be ok
+          submit2b <- mgr.submit(job2)
+          // and status should again be pending
+          status2c <- mgr.status(JobId2)
+          ids3 <- mgr.jobIds
+
+          _ <- latch.complete(())
+
+        } yield {
+          submit1 must beTrue
+          submit2a must beTrue
+          submit2b must beTrue
+          ids1 must_== List(JobId1, JobId2)
+          ids2 must_== List(JobId1)
+          ids3 must_== List(JobId1, JobId2)
+          status1 must beSome(Status.Running: Status)
+          status2a must beSome(Status.Pending: Status)
+          status2b must beSome(Status.Canceled: Status)
+          status2c must beSome(Status.Pending: Status)
+        }
+      }
+    }
+
     "emit notifications" >>* {
       val JobId = 42
 
