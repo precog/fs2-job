@@ -191,12 +191,12 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
             case Some(old @ Context(Status.Pending, cancel)) =>
               val running = Context(Status.Running, cancel)
 
-              val casF = Concurrent[F] delay {
+              val replacedF = Concurrent[F] delay {
                 meta.replace(id, old, running)
               }
 
-              casF flatMap { result =>
-                if (result)
+              replacedF flatMap { replaced =>
+                if (replaced)
                   Concurrent[F].pure(Some(running))
                 else
                   attemptF
@@ -209,12 +209,12 @@ final class JobManager[F[_]: Concurrent: Timer, I, N] private (
             case None if ignoreAbsence =>
               val running = Context(Status.Running, isCanceled.set(true))
 
-              val casF = Concurrent[F] delay {
+              val putF = Concurrent[F] delay {
                 Option(meta.putIfAbsent(id, running)).isEmpty
               }
 
-              casF flatMap { result =>
-                if (result)
+              putF flatMap { put =>
+                if (put)
                   Concurrent[F].pure(Some(running))
                 else
                   attemptF
