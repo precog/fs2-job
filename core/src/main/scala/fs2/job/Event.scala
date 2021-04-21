@@ -21,11 +21,36 @@ import scala.concurrent.duration.FiniteDuration
 
 import java.lang.Throwable
 
-sealed trait Event[I] extends Product with Serializable
+/**
+ * Managed job termination event.
+ */
+sealed trait Event[I] extends Product with Serializable {
+  /** Job identifier. */
+  def id: I
 
-object Event {
-  final case class Completed[I](id: I, start: Timestamp, duration: FiniteDuration) extends Event[I]
-  final case class Failed[I](id: I, start: Timestamp, duration: FiniteDuration, ex: Throwable) extends Event[I]
+  /** When the job started (as opposed to submitted). */
+  def start: Timestamp
+
+  /** Duration the job ran before terminating. */
+  def duration: FiniteDuration
 }
 
-final case class Timestamp(val epoch: FiniteDuration)
+object Event {
+  final case class Completed[I](
+      id: I,
+      start: Timestamp,
+      duration: FiniteDuration) extends Event[I]
+
+  final case class Failed[I](
+      id: I,
+      start: Timestamp,
+      duration: FiniteDuration,
+      ex: Throwable) extends Event[I]
+
+  final case class Canceled[I](
+      id: I,
+      start: Timestamp,
+      duration: FiniteDuration) extends Event[I]
+}
+
+final case class Timestamp(epoch: FiniteDuration)

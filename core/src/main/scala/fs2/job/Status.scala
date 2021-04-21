@@ -19,16 +19,12 @@ package fs2.job
 import cats.Eq
 
 import scala.{Product, Serializable}
-// import scala.concurrent.duration.FiniteDuration
 
 sealed trait Status extends Product with Serializable
 
 object Status {
-  implicit val equal: Eq[Status] = Eq.fromUniversalEquals[Status]
-
   case object Pending extends Status
-  case object Canceled extends Status   // kill marker to prevent already-scheduled task
-
-  // final case class Scheduled(fromNow: FiniteDuration) extends Status
   case object Running extends Status
+
+  implicit val equal: Eq[Status] = Eq.fromUniversalEquals[Status]
 }
